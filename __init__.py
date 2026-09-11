@@ -81,7 +81,7 @@ def read_clipboard_text() -> Optional[str]:
     返回 ``None`` 表示本次读不到（别的程序占用剪贴板等），空串表示剪贴板是空的。
     Windows 专属；非 Windows 返回 ``None``。
     """
-    if ctypes.windll is None:
+    if not hasattr(ctypes, "windll"):
         return None
     CF_UNICODETEXT = 13
     user32 = ctypes.windll.user32
