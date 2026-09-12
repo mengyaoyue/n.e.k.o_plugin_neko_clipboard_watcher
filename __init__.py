@@ -30,6 +30,7 @@ from plugin.sdk.plugin import (
     plugin_entry,
 )
 
+from ._panel import PanelServer, find_open_port
 from ._clipboard_logic import (
     CommentGate,
     build_comment,
@@ -139,6 +140,8 @@ class ClipboardWatcherPlugin(NekoPluginBase):
         self._stop_event = threading.Event()
         self._wake_event = threading.Event()
         self._poll_thread: Optional[threading.Thread] = None
+        self._panel_server = None
+        self._panel_port: int = 15700
 
     # ── 配置与状态 ─────────────────────────────────────────────
     async def _load_config(self) -> None:
@@ -196,6 +199,7 @@ class ClipboardWatcherPlugin(NekoPluginBase):
             target=self._poll_loop, daemon=True, name="neko-clipboard-poll"
         )
         self._poll_thread.start()
+        self._start_panel()
         self.logger.info(
             "[clipboard] 启动：enabled={}, interval={}s, cooldown={}s, max/h={}",
             self.gate.enabled, self.poll_interval_seconds,
@@ -203,8 +207,63 @@ class ClipboardWatcherPlugin(NekoPluginBase):
         )
         return Ok({"status": "running", "version": "0.1.0"})
 
+    def _start_panel(self) -> None:
+        endpoints = {
+            ("GET", "/api/status"): self._panel_status,
+            ("POST", "/api/toggle"): self._panel_toggle,
+            ("POST", "/api/config"): self._panel_config,
+        }
+        port = find_open_port(self._panel_port)
+        server = PanelServer(port, self._panel_html, endpoints)
+        if server.start():
+            self._panel_server = server
+            self._panel_port = port
+            self.logger.info("[clipboard] 管理面板已启动: http://127.0.0.1:{}", port)
+            try:
+                registered = self.register_static_ui("static")
+                self.logger.info("[clipboard] static UI 注册: {}", registered)
+            except Exception as exc:
+                self.logger.warning("[clipboard] static UI 注册失败: {}", exc)
+        else:
+            self.logger.warning("[clipboard] 管理面板启动失败")
+
+    def _panel_status(self, _body: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "enabled": self.gate.enabled,
+            "poll_interval": self.poll_interval_seconds,
+            "cooldown_seconds": int(self.gate.cooldown_seconds),
+            "max_per_hour": self.gate.max_per_hour,
+            "pushed_this_hour": len(self.gate.push_times),
+            "tracked": len(self.gate.recent_hashes),
+        }
+
+    def _panel_toggle(self, body: dict[str, Any]) -> dict[str, Any]:
+        self.gate.enabled = bool(body.get("enabled"))
+        self._save_state()
+        return {"ok": True, "enabled": self.gate.enabled}
+
+    def _panel_config(self, body: dict[str, Any]) -> dict[str, Any]:
+        if "cooldown_seconds" in body:
+            self.gate.cooldown_seconds = max(10.0, float(body["cooldown_seconds"]))
+            self.cooldown_seconds = self.gate.cooldown_seconds
+        if "max_per_hour" in body:
+            self.gate.max_per_hour = max(1, int(body["max_per_hour"]))
+        if "poll_interval" in body:
+            self.poll_interval_seconds = max(1.0, float(body["poll_interval"]))
+        self._save_state()
+        return self._panel_status({})
+
+    def _panel_html(self) -> str:
+        page = Path(__file__).parent / "static" / "index.html"
+        try:
+            return page.read_text(encoding="utf-8")
+        except Exception:
+            return "<h1>面板页缺失喵（static/index.html）</h1>"
+
     @lifecycle(id="shutdown")
     def shutdown(self, **_):
+        if self._panel_server:
+            self._panel_server.stop()
         self._stop_event.set()
         self._wake_event.set()
         if self._poll_thread and self._poll_thread.is_alive():
