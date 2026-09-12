@@ -7,5 +7,5 @@ auto_start = true
 
 [neko_clipboard_watcher]
 poll_interval_seconds = 2
-cooldown_seconds = 600
-max_per_hour = 6
+cooldown_seconds = 5
+max_per_hour = 30

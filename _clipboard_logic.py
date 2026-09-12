@@ -100,12 +100,12 @@ class CommentGate:
 
     def __init__(
         self,
-        cooldown_seconds: float = 600.0,
-        max_per_hour: int = 6,
+        cooldown_seconds: float = 5.0,
+        max_per_hour: int = 30,
         max_tracked: int = 200,
         now_fn=time.time,
     ):
-        self.cooldown_seconds = max(10.0, float(cooldown_seconds))
+        self.cooldown_seconds = max(2.0, float(cooldown_seconds))
         self.max_per_hour = max(1, int(max_per_hour))
         self.max_tracked = max(10, int(max_tracked))
         self._now = now_fn

@@ -40,8 +40,8 @@ _PLUGIN_ID = "neko_clipboard_watcher"
 
 _DEFAULTS: dict[str, Any] = {
     "poll_interval_seconds": 2.0,
-    "cooldown_seconds": 600.0,
-    "max_per_hour": 6,
+    "cooldown_seconds": 5.0,
+    "max_per_hour": 30,
     "push_enabled": True,
 }
 
@@ -86,6 +86,16 @@ def read_clipboard_text() -> Optional[str]:
     CF_UNICODETEXT = 13
     user32 = ctypes.windll.user32
     kernel32 = ctypes.windll.kernel32
+    # 64 位下必须显式声明类型，否则句柄被截断成 32 位、解引用时越界崩溃
+    user32.OpenClipboard.argtypes = [ctypes.c_void_p]
+    user32.OpenClipboard.restype = ctypes.c_bool
+    user32.GetClipboardData.argtypes = [ctypes.c_uint]
+    user32.GetClipboardData.restype = ctypes.c_void_p
+    user32.CloseClipboard.restype = ctypes.c_bool
+    kernel32.GlobalLock.argtypes = [ctypes.c_void_p]
+    kernel32.GlobalLock.restype = ctypes.c_void_p
+    kernel32.GlobalUnlock.argtypes = [ctypes.c_void_p]
+    kernel32.GlobalUnlock.restype = ctypes.c_bool
     if not user32.OpenClipboard(None):
         return None
     try:
@@ -143,7 +153,7 @@ class ClipboardWatcherPlugin(NekoPluginBase):
         self.poll_interval_seconds = max(1.0, _safe_float(
             section.get("poll_interval_seconds"), _DEFAULTS["poll_interval_seconds"]
         ))
-        self.cooldown_seconds = max(10.0, _safe_float(
+        self.cooldown_seconds = max(2.0, _safe_float(
             section.get("cooldown_seconds"), _DEFAULTS["cooldown_seconds"]
         ))
         self.max_per_hour = max(1, _safe_int(section.get("max_per_hour"), _DEFAULTS["max_per_hour"]))
