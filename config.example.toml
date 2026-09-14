@@ -1,0 +1,11 @@
+# 剪贴板猫娘（neko_clipboard_watcher）配置示例
+# 安装时会作为 config/plugin.toml 的默认值。
+
+[plugin_runtime]
+enabled = true
+auto_start = true
+
+[neko_clipboard_watcher]
+poll_interval_seconds = 2
+cooldown_seconds = 5
+max_per_hour = 30

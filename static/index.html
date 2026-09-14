@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>剪贴板猫娘 · 管理面板</title>
+<style>
+body{margin:0;font-family:'Microsoft YaHei',sans-serif;background:#1b1826;color:#e8e4f2;display:flex;justify-content:center;padding:24px}
+.wrap{max-width:720px;width:100%}
+h1{font-size:24px;margin:8px 0 4px}
+.sub{color:#9a93b5;font-size:14px;margin-bottom:16px}
+.card{background:#241f33;border:1px solid #3a3352;border-radius:16px;padding:16px;margin-bottom:16px}
+.card h2{font-size:17px;margin:2px 0 12px;color:#c9b9ff}
+td{padding:6px;border-bottom:1px solid #322b4a;font-size:14px}
+td:first-child{color:#9a93b5;width:170px}
+input{background:#2a2440;color:#e8e4f2;border:1px solid #3a3352;border-radius:8px;padding:6px 10px;font-size:14px;width:100px}
+button{background:#6c5ce7;color:#fff;border:0;border-radius:10px;padding:8px 18px;font-size:14px;cursor:pointer;margin:4px 8px 4px 0}
+button:hover{background:#7d6ef0}
+.toggle{display:inline-block;padding:4px 12px;border-radius:20px;font-size:13px}
+.on{background:#1f4a2e;color:#7be3a2}
+.off{background:#4a1f2a;color:#e37b8f}
+#status{color:#9a93b5;font-size:13px;margin-left:8px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>📋 剪贴板猫娘 · 管理面板</h1>
+  <div class="sub">监听剪贴板变化，猫娘主动搭话；疑似密码/密钥看都不看喵</div>
+  <div class="card">
+    <h2>监听状态：<span id="tg" class="toggle">…</span></h2>
+    <button onclick="toggle()">开/关 监听</button>
+    <span id="status"></span>
+    <table style="margin-top:12px">
+      <tr><td>轮询间隔（秒）</td><td><input id="poll" type="number"></td></tr>
+      <tr><td>冷却（秒）</td><td><input id="cool" type="number"></td></tr>
+      <tr><td>每小时上限（次）</td><td><input id="max" type="number"></td></tr>
+    </table>
+    <button onclick="save()">保存配置</button>
+    <button onclick="loadStatus()">刷新</button>
+  </div>
+  <div class="card">
+    <h2>隐私说明</h2>
+    <div class="sub">疑似密码/密钥/令牌的内容不读取不落盘；仅保存内容哈希用于去重；全部本地处理不联网喵。</div>
+  </div>
+</div>
+<script>
+function findBase(){const b=[""];for(let p=15700;p<=15704;p++)b.push(`http://127.0.0.1:${p}`);return b}
+let API_BASE=localStorage.getItem("cb_base")||"";
+async function api(path,opts){
+  const bases=[API_BASE,...findBase()].filter((v,i,a)=>a.indexOf(v)===i);
+  for(const base of bases){
+    try{const r=await fetch(base+path,opts);if(r.ok){API_BASE=base;localStorage.setItem("cb_base",base);return await r.json();}}catch(e){}
+  }
+  throw new Error("面板服务不可达喵（插件未启动？）");
+}
+async function loadStatus(){
+  try{
+    const d=await api("/api/status");
+    document.getElementById("tg").textContent=d.enabled?"监听中":"已关闭";
+    document.getElementById("tg").className="toggle "+(d.enabled?"on":"off");
+    document.getElementById("poll").value=d.poll_interval;
+    document.getElementById("cool").value=d.cooldown_seconds;
+    document.getElementById("max").value=d.max_per_hour;
+    document.getElementById("status").textContent=`本小时已搭话 ${d.pushed_this_hour}/${d.max_per_hour} 次 · 去重池 ${d.tracked} 条喵～`;
+  }catch(e){document.getElementById("status").textContent="加载失败："+e}
+}
+async function toggle(){
+  try{const d=await api("/api/status");await api("/api/toggle",{method:"POST",body:JSON.stringify({enabled:!d.enabled})});await loadStatus()}catch(e){alert(e)}
+}
+async function save(){
+  try{await api("/api/config",{method:"POST",body:JSON.stringify({poll_interval:parseFloat(document.getElementById("poll").value),cooldown_seconds:parseFloat(document.getElementById("cool").value),max_per_hour:parseInt(document.getElementById("max").value)})});await loadStatus()}catch(e){alert(e)}
+}
+loadStatus();
+</script>
+</body>
+</html>

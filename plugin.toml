@@ -1,0 +1,35 @@
+[plugin]
+name = "剪贴板猫娘"
+description = "监听主人的剪贴板，猫娘看到你复制了什么就主动搭话喵：链接要不要看看、代码要不要帮忙、英文要不要翻译、长文要不要总结。隐私优先——疑似密码/密钥的内容看都不看，全部本地处理；节奏可控（去重 + 冷却 + 每小时上限 + 总开关），绝不做话痨猫。"
+short_description = "Catgirl watches your clipboard and proactively offers help; privacy-first, rate-limited, one switch."
+keywords = ["剪贴板", "clipboard", "感知", "awareness", "主动", "proactive", "猫娘", "neko", "翻译", "translate", "监听", "watcher"]
+version = "0.2.0"
+type = "plugin"
+id = "neko_clipboard_watcher"
+entry = "plugin.plugins.neko_clipboard_watcher:ClipboardWatcherPlugin"
+
+[plugin.author]
+name = "MENGYAOYUE"
+
+[plugin.sdk]
+recommended = ">=0.1.0,<0.2.0"
+supported = ">=0.1.0,<0.3.0"
+
+[plugin.i18n]
+default_locale = "zh-CN"
+locales_dir = "i18n"
+
+[plugin_runtime]
+enabled = true
+auto_start = true
+
+[plugin.store]
+enabled = true
+
+[neko_clipboard_watcher]
+# 剪贴板轮询间隔（秒，最小 1）
+poll_interval_seconds = 2
+# 两次主动搭话的最小间隔（秒，最小 2）
+cooldown_seconds = 5
+# 每小时最多主动搭话次数
+max_per_hour = 30
