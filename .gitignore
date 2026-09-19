@@ -29,3 +29,7 @@ venv/
 .vscode/
 .idea/
 .DS_Store
+
+# ── 运行数据 ──
+store.db
+data/
