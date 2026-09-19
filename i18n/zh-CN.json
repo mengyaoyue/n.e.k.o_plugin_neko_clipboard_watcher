@@ -1,0 +1,17 @@
+{
+  "plugin.name": "剪贴板猫娘",
+  "plugin.description": "监听主人的剪贴板，猫娘看到你复制了什么就主动搭话喵：链接要不要看看、代码要不要帮忙、英文要不要翻译、长文要不要总结。隐私优先——疑似密码/密钥的内容看都不看，全部本地处理；节奏可控（去重 + 冷却 + 每小时上限 + 总开关），绝不做话痨猫。",
+  "panel.title": "剪贴板猫娘 · 管理面板",
+  "panel.subtitle": "监听剪贴板变化，猫娘主动搭话；疑似密码/密钥看都不看喵",
+  "panel.status_label": "监听状态",
+  "panel.status.on": "监听中",
+  "panel.status.off": "已关闭",
+  "panel.toggle": "开/关 监听",
+  "panel.poll_interval": "轮询间隔（秒）",
+  "panel.cooldown": "冷却（秒）",
+  "panel.max_per_hour": "每小时上限（次）",
+  "panel.save": "保存配置",
+  "panel.refresh": "刷新",
+  "panel.privacy_title": "隐私说明",
+  "panel.privacy_desc": "疑似密码/密钥/令牌的内容不读取不落盘；仅保存内容哈希用于去重；全部本地处理不联网喵。"
+}

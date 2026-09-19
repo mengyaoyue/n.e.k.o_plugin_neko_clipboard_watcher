@@ -1,0 +1,17 @@
+{
+  "plugin.name": "Clipboard Catgirl",
+  "plugin.description": "Watches your clipboard and proactively chimes in: offer to open links, help with code, translate English, or summarize long text. Privacy-first — anything that looks like a password or key is never read, and everything stays local. Rate-limited with de-duplication, cooldown, an hourly cap, and a master switch.",
+  "panel.title": "Clipboard Catgirl · Panel",
+  "panel.subtitle": "Watches clipboard changes and chimes in; suspected passwords/keys are never read",
+  "panel.status_label": "Listening status",
+  "panel.status.on": "Listening",
+  "panel.status.off": "Off",
+  "panel.toggle": "Toggle listening",
+  "panel.poll_interval": "Poll interval (s)",
+  "panel.cooldown": "Cooldown (s)",
+  "panel.max_per_hour": "Hourly cap (times)",
+  "panel.save": "Save config",
+  "panel.refresh": "Refresh",
+  "panel.privacy_title": "Privacy",
+  "panel.privacy_desc": "Suspected passwords/keys/tokens are never read or stored; only a content hash is kept for de-duplication; everything is processed locally."
+}

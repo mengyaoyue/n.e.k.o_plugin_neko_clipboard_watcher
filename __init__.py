@@ -30,12 +30,12 @@ from plugin.sdk.plugin import (
     plugin_entry,
 )
 
-from ._panel import PanelServer, find_open_port
 from ._clipboard_logic import (
     CommentGate,
     build_comment,
     classify_content,
 )
+from ._panel import PanelServer, find_open_port
 
 _PLUGIN_ID = "neko_clipboard_watcher"
 

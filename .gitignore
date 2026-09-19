@@ -17,6 +17,10 @@ tests/
 .coverage
 htmlcov/
 
+# ── 运行时数据 ──
+config/
+data/
+
 # ── 虚拟环境 ──
 .venv/
 venv/
