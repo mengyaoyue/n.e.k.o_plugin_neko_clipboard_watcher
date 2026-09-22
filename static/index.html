@@ -1,74 +1,577 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>剪贴板猫娘 · 管理面板</title>
 <style>
-body{margin:0;font-family:'Microsoft YaHei',sans-serif;background:#1b1826;color:#e8e4f2;display:flex;justify-content:center;padding:24px}
-.wrap{max-width:720px;width:100%}
-h1{font-size:24px;margin:8px 0 4px}
-.sub{color:#9a93b5;font-size:14px;margin-bottom:16px}
-.card{background:#241f33;border:1px solid #3a3352;border-radius:16px;padding:16px;margin-bottom:16px}
-.card h2{font-size:17px;margin:2px 0 12px;color:#c9b9ff}
-td{padding:6px;border-bottom:1px solid #322b4a;font-size:14px}
-td:first-child{color:#9a93b5;width:170px}
-input{background:#2a2440;color:#e8e4f2;border:1px solid #3a3352;border-radius:8px;padding:6px 10px;font-size:14px;width:100px}
-button{background:#6c5ce7;color:#fff;border:0;border-radius:10px;padding:8px 18px;font-size:14px;cursor:pointer;margin:4px 8px 4px 0}
-button:hover{background:#7d6ef0}
-.toggle{display:inline-block;padding:4px 12px;border-radius:20px;font-size:13px}
-.on{background:#1f4a2e;color:#7be3a2}
-.off{background:#4a1f2a;color:#e37b8f}
-#status{color:#9a93b5;font-size:13px;margin-left:8px}
+@font-face{font-family:'Quicksand';src:url("fonts/quicksand-500.woff2") format("woff2");font-weight:400 600;font-display:swap}
+@font-face{font-family:'Lora';src:url("fonts/lora-500.woff2") format("woff2");font-weight:400 600;font-display:swap}
+@font-face{font-family:'JBMono';src:url("fonts/jetbrains-mono-400.woff2") format("woff2");font-weight:400 600;font-display:swap}
+
+:root{
+  --ink:#2b2640; --ink2:#585070; --dim:#8d86a8;
+  --glass:rgba(255,255,255,.72); --line:rgba(255,255,255,.85); --edge:rgba(122,110,175,.20);
+  --accent:#7c6cf0; --accent-lt:#a99cf8;
+  --ok:#2c9d72; --bad:#d24f6d; --warn:#b8811f;
+  --shadow:0 10px 28px rgba(58,48,110,.13);
+  --font-ui:'Quicksand',system-ui,'Microsoft YaHei','PingFang SC',sans-serif;
+  --font-body:'Quicksand',system-ui,'Microsoft YaHei','PingFang SC',sans-serif;
+  --font-mono:'JBMono',ui-monospace,Consolas,'Microsoft YaHei',monospace;
+  --fs:14px;
+  --fs-2xs:calc(var(--fs) * .82); --fs-xs:calc(var(--fs) * .86);
+  --fs-sm:calc(var(--fs) * .89);  --fs-base:calc(var(--fs) * .92);
+  --fs-in:calc(var(--fs) * .93);  --fs-md:calc(var(--fs) * .96);
+  --fs-lg:calc(var(--fs) * 1.04); --fs-xl:calc(var(--fs) * 1.36);
+  --fs-h1:calc(var(--fs) * 1.43);
+  --bg-stack:
+    linear-gradient(180deg,rgba(255,255,255,.36) 0%,rgba(255,255,255,.62) 45%,rgba(253,251,255,.78) 100%),
+    url("bg.jpg") center top / cover no-repeat fixed,
+    linear-gradient(160deg,#eef4ff,#f7f1ff 55%,#eefaf5);
+}
+/* 页签与面板靠它切换：没有这条规则，页签切换会失效，面板看起来像摆设 */
+.hidden{display:none !important}
+*{box-sizing:border-box;scrollbar-width:thin;scrollbar-color:rgba(124,108,240,.32) transparent}
+*::-webkit-scrollbar{width:9px;height:9px}
+*::-webkit-scrollbar-track{background:transparent}
+*::-webkit-scrollbar-thumb{background:rgba(124,108,240,.3);border-radius:6px;border:2px solid transparent;background-clip:content-box}
+body{margin:0;color:var(--ink);font-family:var(--font-body);font-size:var(--fs);line-height:1.7;background:var(--bg-stack)}
+.app{max-width:1080px;margin:0 auto;padding:20px 18px 60px}
+#trail-canvas{position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:90}
+#trail-canvas.off{display:none}
+
+.topbar{display:flex;align-items:center;gap:13px;flex-wrap:wrap;margin-bottom:14px}
+.mark{width:46px;height:46px;border-radius:15px;flex:none;display:grid;place-items:center;
+  background:linear-gradient(160deg,#7fd0f5,#7c6cf0);color:#fff;box-shadow:0 8px 20px rgba(90,120,232,.32)}
+.mark svg{width:24px;height:24px;stroke:#fff;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+h1{font-family:var(--font-ui);font-size:var(--fs-h1);margin:0;letter-spacing:.3px}
+.sub{color:var(--ink2);font-size:var(--fs-sm);margin-top:2px}
+.pill{margin-left:auto;display:flex;align-items:center;gap:8px;background:var(--glass);
+  border:1px solid var(--line);border-radius:999px;padding:6px 14px;font-size:var(--fs-sm);
+  color:var(--ink2);box-shadow:var(--shadow);white-space:nowrap}
+.dot{width:8px;height:8px;border-radius:50%;background:#c6c0dc;flex:none}
+.dot.on{background:#3dbd8b;box-shadow:0 0 0 4px rgba(61,189,139,.2)}
+.dot.off{background:#e0778e;box-shadow:0 0 0 4px rgba(224,119,142,.2)}
+
+.layout{display:grid;grid-template-columns:88px minmax(0,1fr);gap:16px;align-items:start}
+.rail{position:sticky;top:16px;display:flex;flex-direction:column;gap:4px;padding:8px;
+  background:var(--glass);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
+  border:1px solid var(--line);border-radius:22px;box-shadow:var(--shadow)}
+.tab{display:flex;flex-direction:column;align-items:center;gap:5px;padding:11px 6px;border-radius:16px;
+  border:1px solid transparent;background:transparent;color:var(--ink2);font-size:var(--fs-2xs);
+  font-family:inherit;cursor:pointer;transition:.16s}
+.tab svg{width:21px;height:21px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.tab:hover{background:rgba(255,255,255,.62);color:var(--ink)}
+.tab.on{background:linear-gradient(180deg,#9184f6,#7c6cf0);color:#fff;box-shadow:0 8px 18px rgba(124,108,240,.36)}
+.content{min-width:0}
+
+.card{background:var(--glass);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
+  border:1px solid var(--line);border-radius:18px;padding:16px 18px;margin-bottom:14px;box-shadow:var(--shadow)}
+.card h2{display:flex;align-items:center;gap:9px;font-family:var(--font-ui);font-size:var(--fs-lg);
+  margin:0 0 13px;color:#40375f;font-weight:600}
+.card h2::before{content:"";width:4px;height:15px;border-radius:3px;flex:none;
+  background:linear-gradient(180deg,var(--accent),var(--accent-lt))}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:11px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:11px}
+label{display:block;font-size:var(--fs-xs);color:var(--dim);margin-bottom:5px;font-weight:500}
+input,select{background:rgba(255,255,255,.86);color:var(--ink);border:1px solid var(--edge);
+  border-radius:11px;padding:8px 11px;font-size:var(--fs-in);font-family:inherit;transition:.15s}
+input:focus,select:focus{outline:none;border-color:var(--accent-lt);box-shadow:0 0 0 3px rgba(124,108,240,.16)}
+button{display:inline-flex;align-items:center;gap:6px;background:linear-gradient(180deg,#8b7cf2,#7365e6);
+  color:#fff;border:0;border-radius:11px;padding:8px 17px;font-size:var(--fs-in);font-family:inherit;
+  cursor:pointer;box-shadow:0 6px 16px rgba(115,101,230,.28);transition:.15s}
+button:hover{filter:brightness(1.06);transform:translateY(-1px)}
+button.ghost{background:rgba(255,255,255,.7);color:var(--ink2);border:1px solid var(--edge);box-shadow:none}
+button.ghost:hover{color:var(--accent);border-color:var(--accent-lt);filter:none}
+button.tiny{padding:2px 10px;font-size:var(--fs-2xs);box-shadow:none}
+:focus-visible{outline:2px solid var(--accent-lt);outline-offset:2px;border-radius:9px}
+
+.stats{display:grid;grid-template-columns:repeat(auto-fill,minmax(118px,1fr));gap:10px}
+.stat{background:rgba(255,255,255,.66);border:1px solid var(--line);border-radius:14px;padding:10px 12px}
+.stat b{display:block;font-family:var(--font-ui);font-size:var(--fs-xl);color:#40375f;line-height:1.25}
+.stat span{font-size:var(--fs-2xs);color:var(--dim)}
+.badge{display:inline-block;padding:2px 10px;border-radius:999px;font-size:var(--fs-xs);margin:2px 4px 2px 0}
+.badge.on{background:rgba(61,189,139,.18);color:var(--ok)}
+.badge.off{background:rgba(224,119,142,.16);color:var(--bad)}
+.badge.info{background:rgba(124,108,240,.14);color:#6558c9}
+.badge.warn{background:rgba(224,177,85,.22);color:var(--warn)}
+.notice{background:rgba(255,244,219,.85);border-left:3px solid #e0b155;color:#71521a;
+  padding:11px 14px;border-radius:0 12px 12px 0;font-size:var(--fs-sm);margin-bottom:13px}
+.notice.bad{background:rgba(255,235,239,.9);border-left-color:#dd6a86;color:#7d2740}
+.notice.good{background:rgba(232,250,240,.9);border-left-color:#3dbd8b;color:#1f6b4f}
+.muted{color:var(--dim);font-size:var(--fs-sm)}
+.muted code{background:rgba(255,255,255,.7);border:1px solid var(--edge);border-radius:6px;
+  padding:1px 6px;font-size:var(--fs-xs);font-family:var(--font-mono)}
+.status{margin-left:8px;font-size:var(--fs-xs);color:var(--dim);display:inline-flex;align-items:center;gap:2px}
+.spin{display:inline-block;width:11px;height:11px;border-radius:50%;flex:none;margin-right:5px;
+  border:2px solid rgba(124,108,240,.3);border-top-color:var(--accent);animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* 主开关：一眼看到状态、一点就切 */
+.bigswitch{display:flex;align-items:center;gap:14px;cursor:pointer;user-select:none;
+  background:rgba(255,255,255,.62);border:1px solid var(--line);border-radius:16px;padding:14px 16px}
+.bigswitch .knob{width:52px;height:28px;border-radius:16px;background:#d6d0ea;position:relative;transition:.2s;flex:none}
+.bigswitch .knob::after{content:"";position:absolute;top:3px;left:3px;width:22px;height:22px;border-radius:50%;
+  background:#fff;box-shadow:0 2px 5px rgba(0,0,0,.18);transition:.2s}
+.bigswitch.on .knob{background:linear-gradient(90deg,#8f80f5,#6f5ee8)}
+.bigswitch.on .knob::after{left:27px}
+.bigswitch .txt{font-family:var(--font-ui);font-size:var(--fs-md);color:#3f3859}
+.bigswitch .hint{color:var(--dim);font-size:var(--fs-sm)}
+
+.expfloat{position:fixed;z-index:99;pointer-events:none;font-family:var(--font-ui);font-weight:600;
+  color:#6f5ee8;text-shadow:0 1px 0 #fff,0 0 14px rgba(124,108,240,.55);animation:floatUp 1.1s ease forwards}
+@keyframes floatUp{0%{opacity:0;transform:translate(-50%,0) scale(.9)}20%{opacity:1;transform:translate(-50%,-12px)}
+  100%{opacity:0;transform:translate(-50%,-66px)}}
+
+@media (max-width:760px){
+  .layout{grid-template-columns:1fr}
+  .rail{position:static;flex-direction:row;overflow-x:auto;border-radius:18px}
+  .tab{min-width:74px}
+  .pill{margin-left:0}
+}
 </style>
 </head>
 <body>
-<div class="wrap">
-  <h1>📋 剪贴板猫娘 · 管理面板</h1>
-  <div class="sub">监听剪贴板变化，猫娘主动搭话；疑似密码/密钥看都不看喵</div>
-  <div class="card">
-    <h2>监听状态：<span id="tg" class="toggle">…</span></h2>
-    <button onclick="toggle()">开/关 监听</button>
-    <span id="status"></span>
-    <table style="margin-top:12px">
-      <tr><td>轮询间隔（秒）</td><td><input id="poll" type="number"></td></tr>
-      <tr><td>冷却（秒）</td><td><input id="cool" type="number"></td></tr>
-      <tr><td>每小时上限（次）</td><td><input id="max" type="number"></td></tr>
-    </table>
-    <button onclick="save()">保存配置</button>
-    <button onclick="loadStatus()">刷新</button>
+<canvas id="trail-canvas" aria-hidden="true"></canvas>
+<div class="app">
+
+  <div class="topbar">
+    <div class="mark" aria-hidden="true">
+      <svg viewBox="0 0 24 24"><rect x="5" y="4.5" width="14" height="16" rx="2.5"/><path d="M9 4.5V3h6v1.5"/><path d="M8.5 10h7M8.5 14h5"/></svg>
+    </div>
+    <div>
+      <h1>剪贴板猫娘</h1>
+      <div class="sub">监听剪贴板变化，猫娘主动搭话；疑似密码或密钥看都不看</div>
+    </div>
+    <div class="pill">
+      <span class="dot" id="pill-dot"></span><span id="pill-text">正在连接面板…</span>
+    </div>
   </div>
-  <div class="card">
-    <h2>隐私说明</h2>
-    <div class="sub">疑似密码/密钥/令牌的内容不读取不落盘；仅保存内容哈希用于去重；全部本地处理不联网喵。</div>
+
+  <div class="layout">
+    <nav class="rail">
+      <button class="tab on" data-tab="overview">
+        <svg viewBox="0 0 24 24"><path d="M4 13h4v7H4zM10 8h4v12h-4zM16 4h4v16h-4z"/></svg><span>概览</span>
+      </button>
+      <button class="tab" data-tab="limits">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 7v5l3.5 2"/></svg><span>限速</span>
+      </button>
+      <button class="tab" data-tab="look">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M4 12h2M18 12h2M12 4v2M12 18v2M6.3 6.3l1.5 1.5M16.2 16.2l1.5 1.5M17.7 6.3l-1.5 1.5M7.8 16.2l-1.5 1.5"/></svg><span>界面</span>
+      </button>
+    </nav>
+
+    <main class="content">
+
+      <!-- 概览 -->
+      <div id="tab-overview">
+        <div id="warn-box"></div>
+        <div class="card">
+          <h2>监听状态</h2>
+          <div class="bigswitch" id="main-switch" role="button" tabindex="0" aria-pressed="false">
+            <span class="knob"></span>
+            <span>
+              <span class="txt" id="switch-text">—</span>
+              <span class="hint" id="switch-hint">点一下就能开或关</span>
+            </span>
+          </div>
+          <div class="row"><span class="status" id="st-overview"></span></div>
+        </div>
+        <div class="card">
+          <h2>运行数据</h2>
+          <div class="stats" id="stat-box"></div>
+        </div>
+        <div class="card">
+          <h2>隐私</h2>
+          <div class="notice good">
+            疑似密码 / 密钥 / 令牌的内容<b>不读取、不落盘</b>；只保存内容哈希用于去重；
+            全部本地处理、不联网。只有非敏感内容才可能触发猫娘搭话。
+          </div>
+        </div>
+      </div>
+
+      <!-- 限速 -->
+      <div id="tab-limits" class="hidden">
+        <div class="card">
+          <h2>频率与限速</h2>
+          <div class="grid">
+            <div><label>轮询间隔（秒，≥1）</label><input id="cfg-poll" type="number" min="1" step="0.5"></div>
+            <div><label>冷却（秒，≥10）</label><input id="cfg-cool" type="number" min="10" step="1"></div>
+            <div><label>每小时上限（次，≥1）</label><input id="cfg-max" type="number" min="1" step="1"></div>
+          </div>
+          <div class="row">
+            <button id="btn-save">保存配置</button>
+            <button class="ghost" id="btn-refresh">刷新</button>
+            <span class="status" id="st-limits"></span>
+          </div>
+          <div class="muted" style="margin-top:9px">
+            轮询越频繁越灵敏、也越耗一点 CPU；冷却决定两次搭话之间的最短间隔；
+            每小时上限是硬闸门，超了就不再打扰你。
+          </div>
+        </div>
+      </div>
+
+      <!-- 界面 -->
+      <div id="tab-look" class="hidden">
+        <div class="card">
+          <h2>外观</h2>
+          <div class="grid">
+            <div><label>字体</label><select id="ui-font"></select></div>
+            <div><label>字号</label>
+              <select id="ui-size">
+                <option value="s">小</option><option value="m">标准</option>
+                <option value="l">大</option><option value="xl">特大</option>
+              </select>
+            </div>
+            <div><label>鼠标轨迹</label>
+              <select id="ui-trail"><option value="auto">自动</option><option value="on">开</option><option value="off">关</option></select>
+            </div>
+            <div><label>背景</label>
+              <select id="ui-bg">
+                <option value="default">插件自带</option>
+                <option value="custom">我上传的图</option>
+                <option value="plain">纯色渐变（不要图）</option>
+              </select>
+            </div>
+            <div><label>蒙层</label>
+              <select id="ui-bg-dim"><option value="light">薄</option><option value="medium">中</option><option value="strong">厚</option></select>
+            </div>
+          </div>
+          <div class="row">
+            <button class="ghost" id="btn-bg-upload">换背景图</button>
+            <button class="ghost" id="btn-bg-reset">恢复默认</button>
+            <input type="file" id="bg-file" accept="image/png,image/jpeg,image/webp,image/gif" style="display:none">
+            <span class="muted" id="bg-note"></span>
+          </div>
+          <div class="muted" style="margin-top:9px">
+            背景图存在本机的 <code>data/backgrounds/</code>，<b>不进安装包</b>；字看不清就把蒙层调厚。
+          </div>
+        </div>
+      </div>
+
+    </main>
   </div>
 </div>
+
 <script>
-function findBase(){const b=[""];for(let p=15700;p<=15704;p++)b.push(`http://127.0.0.1:${p}`);return b}
-let API_BASE=localStorage.getItem("cb_base")||"";
-async function api(path,opts){
-  const bases=[API_BASE,...findBase()].filter((v,i,a)=>a.indexOf(v)===i);
-  for(const base of bases){
-    try{const r=await fetch(base+path,opts);if(r.ok){API_BASE=base;localStorage.setItem("cb_base",base);return await r.json();}}catch(e){}
+const $ = (id) => document.getElementById(id);
+const PORTS = [15700, 15701, 15702, 15703, 15704];
+let API_BASE = localStorage.getItem('cb_base');
+
+async function findBase(){
+  if (API_BASE !== null && API_BASE !== undefined) return API_BASE;
+  const q = Number(new URLSearchParams(location.search).get('port') || 0);
+  const candidates = ['', ...(q ? [q] : PORTS).map((p) => `http://127.0.0.1:${p}`)];
+  for (const base of candidates){
+    try{
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 1200);
+      const res = await fetch(`${base}/api/status`, {signal: ctrl.signal});
+      clearTimeout(timer);
+      if (!res.ok) continue;
+      const data = await res.json();
+      if (data && data.enabled !== undefined){
+        API_BASE = base;
+        localStorage.setItem('cb_base', base);
+        return base;
+      }
+    }catch(err){ /* 下一个候选 */ }
   }
-  throw new Error("面板服务不可达喵（插件未启动？）");
+  return null;
 }
+async function api(path, body){
+  const base = await findBase();
+  if (base === null){
+    const err = new Error('连不上面板服务：确认插件已启动，或稍等几秒再刷新');
+    err.noService = true;
+    throw err;
+  }
+  const res = await fetch(base + path, body === undefined
+    ? {method: 'GET'}
+    : {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body || {})});
+  return await res.json();
+}
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
+const busy = (el, text) => { el.innerHTML = `<span class="spin"></span>${esc(text || '处理中...')}`; el.style.color = 'var(--ink2)'; };
+const statusOf = (el, ok, msg) => {
+  el.textContent = msg || (ok ? '完成' : '失败');
+  el.style.color = ok ? 'var(--ok)' : 'var(--bad)';
+};
+function floatText(text, at){
+  const node = document.createElement('div');
+  node.className = 'expfloat';
+  node.textContent = text;
+  node.style.left = `${(at && at.x) || window.innerWidth - 120}px`;
+  node.style.top = `${(at && at.y) || 100}px`;
+  node.style.fontSize = 'var(--fs-sm)';
+  document.body.appendChild(node);
+  setTimeout(() => node.remove(), 1200);
+}
+
+// ── 鼠标轨迹（不动鼠标就停帧）────────────────────────────────
+const trail = (() => {
+  const canvas = $('trail-canvas');
+  const ctx = canvas.getContext('2d');
+  let points = [];
+  let raf = 0;
+  let dpr = 1;
+  function resize(){
+    dpr = Math.min(2, window.devicePixelRatio || 1);
+    canvas.width = Math.floor(window.innerWidth * dpr);
+    canvas.height = Math.floor(window.innerHeight * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  function push(x, y){
+    points.push({x, y, t: performance.now()});
+    if (points.length > 34) points = points.slice(-34);
+    if (!raf) raf = requestAnimationFrame(draw);
+  }
+  function draw(){
+    const now = performance.now();
+    points = points.filter((p) => now - p.t < 520);
+    ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
+    if (points.length < 2){ points = []; raf = 0; return; }
+    for (let i = 1; i < points.length; i++){
+      const a = points[i - 1], b = points[i];
+      const power = 1 - (now - b.t) / 520;
+      const ratio = i / points.length;
+      ctx.strokeStyle = `hsla(${212 + ratio * 58}, ${70 - (1 - power) * 20}%, ${60 + ratio * 6}%, ${0.5 * power})`;
+      ctx.lineWidth = 1.8 + 8 * power * ratio;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+    }
+    // 头部加一点光晕，像笔尖，比纯线条显眼
+    const head = points[points.length - 1];
+    const glow = ctx.createRadialGradient(head.x, head.y, 0, head.x, head.y, 18);
+    glow.addColorStop(0, 'rgba(124,108,240,.4)');
+    glow.addColorStop(1, 'rgba(124,108,240,0)');
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(head.x, head.y, 18, 0, Math.PI * 2);
+    ctx.fill();
+    raf = requestAnimationFrame(draw);
+  }
+  function enable(on){
+    canvas.classList.toggle('off', !on);
+    if (!on){
+      points = [];
+      if (raf){ cancelAnimationFrame(raf); raf = 0; }
+      ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
+    }
+  }
+  document.addEventListener('pointermove', (ev) => {
+    if (!canvas.classList.contains('off')) push(ev.clientX, ev.clientY);
+  }, {passive: true});
+  window.addEventListener('resize', resize);
+  resize();
+  const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  return {enable, reduced: reduce};
+})();
+
+// ── 界面偏好 ────────────────────────────────────────────────
+const FONTS = [
+  {id: 'system', name: '系统默认', ui: `'Quicksand',system-ui,'Microsoft YaHei','PingFang SC',sans-serif`, mono: `'JBMono',Consolas,monospace`},
+  {id: 'yahei', name: '微软雅黑 / 苹方', ui: `'Quicksand','Microsoft YaHei','PingFang SC',sans-serif`, mono: `'JBMono',Consolas,'Microsoft YaHei',monospace`},
+  {id: 'source', name: '思源黑体 / Noto', ui: `'Quicksand','Source Han Sans SC','Noto Sans SC','HarmonyOS Sans SC','MiSans','Microsoft YaHei',sans-serif`, mono: `'JBMono','Sarasa Mono SC',Consolas,monospace`},
+  {id: 'wenkai', name: '霞鹜文楷（文书感）', ui: `'Lora','LXGW WenKai','霞鹜文楷',STKaiti,'Songti SC',serif`, mono: `'JBMono','Sarasa Mono SC',Consolas,serif`},
+  {id: 'rounded', name: '圆体（可爱）', ui: `'Quicksand',YouYuan,'幼圆','Yuanti SC','Microsoft YaHei',sans-serif`, mono: `'JBMono',Consolas,monospace`},
+  {id: 'mono', name: '等宽 / 代码', ui: `'JBMono','Cascadia Mono',Consolas,'Microsoft YaHei',monospace`, mono: `'JBMono',Consolas,monospace`},
+];
+const SIZES = {s: '12.5px', m: '14px', l: '15.5px', xl: '17px'};
+const BG_DIM = {
+  light:  'rgba(255,255,255,.26) 0%,rgba(255,255,255,.44) 45%,rgba(253,251,255,.60) 100%',
+  medium: 'rgba(255,255,255,.34) 0%,rgba(255,255,255,.58) 45%,rgba(253,251,255,.74) 100%',
+  strong: 'rgba(255,255,255,.52) 0%,rgba(255,255,255,.72) 45%,rgba(253,251,255,.86) 100%',
+};
+const BG_FALLBACK = 'linear-gradient(160deg,#eef4ff,#f7f1ff 55%,#eefaf5)';
+let PREFS = {ui_font: 'system', ui_font_size: 'm', ui_trail: 'on', bg_mode: 'default', bg_dim: 'medium'};
+let BG = {mode: 'default', dim: 'medium', has_custom: false};
+let STATE = {};
+let bgStamp = 0;
+
+$('ui-font').innerHTML = FONTS.map((f) => `<option value="${f.id}">${f.name}</option>`).join('');
+function applyPrefs(){
+  const font = FONTS.find((f) => f.id === PREFS.ui_font) || FONTS[0];
+  const root = document.documentElement.style;
+  root.setProperty('--font-ui', font.ui);
+  root.setProperty('--font-body', font.ui);
+  root.setProperty('--font-mono', font.mono);
+  root.setProperty('--fs', SIZES[PREFS.ui_font_size] || SIZES.m);
+  $('ui-font').value = font.id;
+  $('ui-size').value = SIZES[PREFS.ui_font_size] ? PREFS.ui_font_size : 'm';
+  $('ui-trail').value = ['auto', 'on', 'off'].includes(PREFS.ui_trail) ? PREFS.ui_trail : 'on';
+  const want = PREFS.ui_trail === 'on' ? true : (PREFS.ui_trail === 'off' ? false : !trail.reduced);
+  trail.enable(want);
+}
+function bgCustomUrl(){
+  const port = (STATE && STATE.panel_port) || '';
+  return port ? `http://127.0.0.1:${port}/bg/custom?v=${bgStamp}` : '';
+}
+function applyBackground(){
+  let image = '';
+  if (BG.mode === 'custom' && BG.has_custom && bgCustomUrl()){
+    image = `url("${bgCustomUrl()}") center top / cover no-repeat fixed, `;
+  } else if (BG.mode === 'default'){
+    image = 'url("bg.jpg") center top / cover no-repeat fixed, ';
+  }
+  document.documentElement.style.setProperty(
+    '--bg-stack',
+    `linear-gradient(180deg,${BG_DIM[BG.dim] || BG_DIM.medium}), ${image}${BG_FALLBACK}`
+  );
+  $('ui-bg').value = BG.mode;
+  $('ui-bg-dim').value = BG.dim;
+  $('bg-note').textContent = BG.mode === 'custom'
+    ? (BG.has_custom ? '使用你上传的图' : '还没上传，点「换背景图」')
+    : (BG.mode === 'plain' ? '纯色渐变' : '插件自带');
+}
+applyPrefs();
+applyBackground();
+
+async function savePrefs(){
+  try { await api('/api/panel_prefs', PREFS); }
+  catch (err){ statusOf($('st-overview'), false, String(err)); }
+}
+async function setBackground(body){
+  $('bg-note').textContent = '处理中…';
+  try {
+    const res = await api('/api/background', body);
+    if (res.background){ BG = Object.assign({}, BG, res.background); bgStamp = Date.now(); applyBackground(); }
+    $('bg-note').textContent = res.ok ? (res.message || '已应用') : (res.error || '失败');
+  } catch (err){ $('bg-note').textContent = '失败：' + err; }
+
+}
+['ui-font', 'ui-size', 'ui-trail'].forEach((id) => {
+  $(id).onchange = () => {
+    PREFS.ui_font = $('ui-font').value;
+    PREFS.ui_font_size = $('ui-size').value;
+    PREFS.ui_trail = $('ui-trail').value;
+    applyPrefs();
+    savePrefs();
+  };
+});
+$('ui-bg').onchange = async () => {
+  const mode = $('ui-bg').value;
+  if (mode === 'custom' && !BG.has_custom){ $('ui-bg').value = BG.mode; $('bg-file').click(); return; }
+  await setBackground({action: 'mode', mode});
+};
+$('ui-bg-dim').onchange = () => setBackground({action: 'mode', mode: BG.mode, dim: $('ui-bg-dim').value});
+$('btn-bg-reset').onclick = () => setBackground({action: 'reset'});
+$('btn-bg-upload').onclick = () => $('bg-file').click();
+$('bg-file').onchange = async () => {
+  const file = $('bg-file').files && $('bg-file').files[0];
+  if (!file) return;
+  if (file.size > 8 * 1024 * 1024){
+    $('bg-note').textContent = `图片 ${(file.size / 1048576).toFixed(1)}MB，超过 8MB 限制`;
+    $('bg-file').value = '';
+    return;
+  }
+  $('bg-note').textContent = '上传中…';
+  try {
+    const dataUrl = await new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ''));
+      reader.onerror = () => resolve('');
+      reader.readAsDataURL(file);
+    });
+    await setBackground({action: 'upload', image_base64: dataUrl});
+  } catch (err){ $('bg-note').textContent = String(err); }
+  $('bg-file').value = '';
+};
+
+// ── 页签 ────────────────────────────────────────────────────
+document.querySelectorAll('.tab').forEach((tab) => {
+  tab.onclick = () => {
+    document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('on', t === tab));
+    ['overview', 'limits', 'look'].forEach((name) => {
+      $(`tab-${name}`).classList.toggle('hidden', name !== tab.dataset.tab);
+    });
+  };
+});
+
+// ── 数据渲染 ────────────────────────────────────────────────
+function render(d){
+  const on = !!d.enabled;
+  $('main-switch').classList.toggle('on', on);
+  $('main-switch').setAttribute('aria-pressed', on ? 'true' : 'false');
+  $('switch-text').textContent = on ? '正在监听剪贴板' : '已停止监听';
+  $('switch-hint').textContent = on ? '点一下就停下' : '点一下开始';
+  $('pill-dot').classList.toggle('on', on);
+  $('pill-dot').classList.toggle('off', !on);
+  $('pill-text').textContent = `${on ? '监听中' : '已关闭'} · 端口 ${d.panel_port || '—'}`;
+
+  const used = d.pushed_this_hour || 0;
+  const cap = d.max_per_hour || 0;
+  $('stat-box').innerHTML = `
+    <div class="stat"><b>${used}/${cap}</b><span>本小时已搭话 / 上限</span></div>
+    <div class="stat"><b>${d.tracked || 0}</b><span>去重池条数</span></div>
+    <div class="stat"><b>${d.poll_interval || '—'}</b><span>轮询间隔（秒）</span></div>
+    <div class="stat"><b>${d.cooldown_seconds || '—'}</b><span>冷却（秒）</span></div>`;
+
+  $('cfg-poll').value = d.poll_interval;
+  $('cfg-cool').value = d.cooldown_seconds;
+  $('cfg-max').value = d.max_per_hour;
+
+  const warns = [];
+  if (used >= cap && cap > 0){
+    warns.push(['', `本小时已经达到上限（${used}/${cap}），在小时窗口翻页前猫娘不会再主动搭话。`]);
+  }
+  $('warn-box').innerHTML = warns.map((w) => `<div class="notice ${w[0]}">${w[1]}</div>`).join('');
+}
+
 async function loadStatus(){
-  try{
-    const d=await api("/api/status");
-    document.getElementById("tg").textContent=d.enabled?"监听中":"已关闭";
-    document.getElementById("tg").className="toggle "+(d.enabled?"on":"off");
-    document.getElementById("poll").value=d.poll_interval;
-    document.getElementById("cool").value=d.cooldown_seconds;
-    document.getElementById("max").value=d.max_per_hour;
-    document.getElementById("status").textContent=`本小时已搭话 ${d.pushed_this_hour}/${d.max_per_hour} 次 · 去重池 ${d.tracked} 条喵～`;
-  }catch(e){document.getElementById("status").textContent="加载失败："+e}
+  busy($('st-overview'), '正在读取…');
+  try {
+    const d = await api('/api/status');
+    STATE = d;
+    if (d.prefs){ PREFS = Object.assign({}, PREFS, d.prefs); applyPrefs(); }
+    if (d.background){ BG = Object.assign({}, BG, d.background); bgStamp = Date.now(); applyBackground(); }
+    render(d);
+    statusOf($('st-overview'), true, '已更新');
+  } catch (err){
+    $('pill-dot').classList.toggle('off', true);
+    $('pill-text').textContent = err && err.noService ? '连不上面板服务' : '读取失败';
+    statusOf($('st-overview'), false, String(err));
+    $('warn-box').innerHTML = `<div class="notice bad">${esc(String(err))}</div>`;
+  }
 }
-async function toggle(){
-  try{const d=await api("/api/status");await api("/api/toggle",{method:"POST",body:JSON.stringify({enabled:!d.enabled})});await loadStatus()}catch(e){alert(e)}
+
+// ── 操作 ────────────────────────────────────────────────────
+async function toggleWatch(){
+  busy($('st-overview'), '切换中…');
+  try {
+    const res = await api('/api/toggle', {enabled: !STATE.enabled});
+    STATE.enabled = !!res.enabled;
+    await loadStatus();
+    floatText(res.enabled ? '开始监听' : '已停止', {x: window.innerWidth - 140, y: 110});
+  } catch (err){ statusOf($('st-overview'), false, String(err)); }
 }
-async function save(){
-  try{await api("/api/config",{method:"POST",body:JSON.stringify({poll_interval:parseFloat(document.getElementById("poll").value),cooldown_seconds:parseFloat(document.getElementById("cool").value),max_per_hour:parseInt(document.getElementById("max").value)})});await loadStatus()}catch(e){alert(e)}
-}
+$('main-switch').onclick = toggleWatch;
+$('main-switch').onkeydown = (ev) => {
+  if (ev.key === 'Enter' || ev.key === ' '){ ev.preventDefault(); toggleWatch(); }
+};
+
+$('btn-save').onclick = async () => {
+  busy($('st-limits'), '保存中…');
+  try {
+    const body = {
+      poll_interval: Math.max(1, parseFloat($('cfg-poll').value) || 2),
+      cooldown_seconds: Math.max(10, parseFloat($('cfg-cool').value) || 10),
+      max_per_hour: Math.max(1, parseInt($('cfg-max').value) || 1),
+    };
+    const d = await api('/api/config', body);
+    render(d);
+    statusOf($('st-limits'), true, '已保存');
+  } catch (err){ statusOf($('st-limits'), false, String(err)); }
+};
+$('btn-refresh').onclick = async () => {
+  busy($('st-limits'), '刷新中…');
+  try { await loadStatus(); statusOf($('st-limits'), true, '已刷新'); }
+  catch (err){ statusOf($('st-limits'), false, String(err)); }
+};
+
 loadStatus();
 </script>
 </body>

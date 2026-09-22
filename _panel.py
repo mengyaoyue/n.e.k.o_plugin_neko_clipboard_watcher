@@ -10,7 +10,31 @@ from __future__ import annotations
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any, Callable, Optional
+
+# 静态资源用得上的一小张 MIME 表；面板靠它发字体、背景图与图标
+_MIME = {
+    ".html": "text/html; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".js": "application/javascript; charset=utf-8",
+    ".json": "application/json; charset=utf-8",
+    ".svg": "image/svg+xml",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+    ".ico": "image/x-icon",
+    ".woff2": "font/woff2",
+    ".woff": "font/woff",
+    ".ttf": "font/ttf",
+    ".mp3": "audio/mpeg",
+}
+
+
+def guess_mime(name: str) -> str:
+    return _MIME.get(Path(name).suffix.lower(), "application/octet-stream")
 
 
 class PanelServer:
@@ -19,10 +43,17 @@ class PanelServer:
         port: int,
         html_provider: Callable[[], str],
         endpoints: dict[tuple[str, str], Callable[[dict[str, Any]], dict[str, Any]]],
+        static_dir: Optional[Path] = None,
+        asset_provider: Optional[Callable[[str], Optional[tuple[bytes, str]]]] = None,
     ):
         self.port = int(port)
         self._html_provider = html_provider
         self._endpoints = endpoints
+        # 面板自己起的端口只能发 "/" 和 API，字体/背景图要靠这里；
+        # 不给 static_dir 时行为与以前完全一致。
+        self._static_dir = Path(static_dir).resolve() if static_dir else None
+        # 自定义背景图之类的资源不在 static/ 里，交给插件自己给（传路径 -> (bytes, mime)）
+        self._asset_provider = asset_provider
         self._httpd: Optional[ThreadingHTTPServer] = None
         self._thread: Optional[threading.Thread] = None
 
@@ -37,6 +68,12 @@ class PanelServer:
                 self.send_response(200)
                 self.send_header("Content-Type", ctype)
                 self.send_header("Content-Length", str(len(body)))
+                # 图片与字体可以缓存；不然每次开面板都要重下背景图
+                head = ctype.split(";")[0].strip().lower()
+                if head.startswith(("image/", "font/")):
+                    self.send_header("Cache-Control", "public, max-age=86400")
+                else:
+                    self.send_header("Cache-Control", "no-store")
                 self.send_header("Access-Control-Allow-Origin", "*")
                 self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
                 self.send_header("Access-Control-Allow-Headers", "Content-Type")
@@ -53,6 +90,18 @@ class PanelServer:
                     return
                 fn = outer._endpoints.get(("GET", route))
                 if fn is None:
+                    rel = route.lstrip("/").split("?", 1)[0]
+                    hit = None
+                    if outer._asset_provider is not None:
+                        try:
+                            hit = outer._asset_provider(rel)
+                        except Exception:
+                            hit = None
+                    if hit is None:
+                        hit = outer._static_asset(rel)
+                    if hit is not None:
+                        self._reply(hit[0], hit[1])
+                        return
                     self.send_error(404)
                     return
                 try:
@@ -88,6 +137,26 @@ class PanelServer:
         )
         self._thread.start()
         return True
+
+    def _static_asset(self, rel: str) -> Optional[tuple[bytes, str]]:
+        """从 static/ 里取文件（只读、防目录穿越）。"""
+        if self._static_dir is None:
+            return None
+        rel = (rel or "").strip().lstrip("/")
+        if not rel or rel.endswith("/"):
+            rel = "index.html"
+        try:
+            target = (self._static_dir / rel).resolve()
+        except Exception:
+            return None
+        if target != self._static_dir and self._static_dir not in target.parents:
+            return None
+        if not target.is_file():
+            return None
+        try:
+            return target.read_bytes(), guess_mime(target.name)
+        except Exception:
+            return None
 
     def stop(self) -> None:
         if self._httpd:
