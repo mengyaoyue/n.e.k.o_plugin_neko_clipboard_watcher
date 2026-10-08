@@ -23,5 +23,8 @@
   "panel.background": "背景",
   "panel.font": "字体",
   "panel.font_size": "字号",
-  "panel.trail": "鼠标轨迹"
+  "panel.trail": "鼠标轨迹",
+  "panel.tab.tarot": "塔罗",
+  "panel.tarot.title": "猫娘塔罗",
+  "panel.tarot.start": "开始占卜"
 }

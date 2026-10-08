@@ -1,7 +1,8 @@
-"""剪贴板猫娘（neko_clipboard_watcher）v0.3.2 · 作者：MENGYAOYUE
+"""剪贴板猫娘（neko_clipboard_watcher）v0.4.0 · 作者：MENGYAOYUE
 
 监听剪贴板变化，猫娘看到主人复制了什么就主动搭话：
 链接 → 要不要看看；代码 → 凑过来看故事；英文 → 要不要翻译；长文 → 要不要总结。
+v0.4.0 起内置「猫娘塔罗」：78 张莱德-伟特（公有领域）真卡面 + 三种牌阵 + 猫娘 LLM 解读。
 
 设计要点：
 - 感知类功能独立成插件，与定时关怀类（neko_daily_fortune）分离
@@ -13,10 +14,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import ctypes
 import json
 import os
 import threading
+import time
+import uuid
 from pathlib import Path
 from typing import Any, Optional
 
@@ -31,6 +35,7 @@ from plugin.sdk.plugin import (
     plugin_entry,
 )
 
+from . import _tarot
 from ._clipboard_logic import (
     CommentGate,
     build_comment,
@@ -154,6 +159,9 @@ class ClipboardWatcherPlugin(NekoPluginBase):
         # 写入一律走 .tmp + os.replace 原子替换，写一半崩了也不会把状态文件截断成 0 字节
         self._state_lock = threading.Lock()
 
+        # 塔罗：解读任务在后台线程跑（面板轮询 job 状态取结果）
+        self._tarot_job: dict[str, Any] = {"status": "idle", "draw_id": "", "text": ""}
+
     # ── 配置与状态 ─────────────────────────────────────────────
     async def _load_config(self) -> None:
         try:
@@ -241,7 +249,7 @@ class ClipboardWatcherPlugin(NekoPluginBase):
             self.gate.enabled, self.poll_interval_seconds,
             self.cooldown_seconds, self.max_per_hour,
         )
-        return Ok({"status": "running", "version": "0.3.2"})
+        return Ok({"status": "running", "version": "0.4.0"})
 
     def _start_panel(self) -> None:
         endpoints = {
@@ -252,6 +260,9 @@ class ClipboardWatcherPlugin(NekoPluginBase):
             ("POST", "/api/panel_prefs"): self._panel_prefs,
             ("GET", "/api/background"): self._panel_background,
             ("POST", "/api/background"): self._panel_background,
+            ("GET", "/api/tarot"): self._panel_tarot_info,
+            ("POST", "/api/tarot/draw"): self._panel_tarot_draw,
+            ("POST", "/api/tarot/interpret"): self._panel_tarot_interpret,
         }
         port = find_open_port(self._panel_port)
         server = PanelServer(
@@ -451,6 +462,220 @@ class ClipboardWatcherPlugin(NekoPluginBase):
             ui["bg_dim"] = dim
         self._save_ui_state(ui)
         return {"ok": True, "background": self._background_state()}
+
+    # ── 猫娘塔罗 ───────────────────────────────────────────────
+    _TAROT_SYSTEM = (
+        "你是猫娘塔罗解读师，用猫娘口吻解读塔罗牌。规则："
+        "1. 只依据给出的牌名、正逆位与传统关键词解读，不许编造关键词以外的信息；"
+        "2. 语气温柔俏皮，自称本喵，称呼用户为主人；"
+        "3. 逐张牌简短解读后，给一段整体总结和一条具体建议；"
+        "4. 全文 300 字以内，纯文本，不要任何列表符号或标题格式。"
+    )
+
+    def _tarot_state(self) -> dict[str, Any]:
+        with self._state_lock:
+            state = self._read_state_dict()
+        ts = state.get("tarot")
+        return ts if isinstance(ts, dict) else {}
+
+    def _panel_tarot_info(self, _body: dict[str, Any]) -> dict[str, Any]:
+        ts = self._tarot_state()
+        history = ts.get("history")
+        history = history if isinstance(history, list) else []
+        readings = ts.get("readings")
+        readings = readings if isinstance(readings, dict) else {}
+        interprets = {
+            str(k): (v.get("interpret") if isinstance(v, dict) else "")
+            for k, v in readings.items()
+        }
+        return {
+            "ok": True,
+            "spreads": _tarot.spread_meta(),
+            "history": history[:_tarot._MAX_HISTORY],
+            "interprets": interprets,
+            "job": self._tarot_job,
+        }
+
+    def _panel_tarot_draw(self, body: dict[str, Any]) -> dict[str, Any]:
+        payload = body if isinstance(body, dict) else {}
+        spread_id = _safe_str(payload.get("spread")) or "three"
+        question = _safe_str(payload.get("question"))
+        drawn = _tarot.draw(spread_id, question)
+        if drawn is None:
+            return {"ok": False, "error": f"未知牌阵：{spread_id}", "spreads": _tarot.spread_meta()}
+        draw_id = uuid.uuid4().hex[:10]
+        entry = {
+            "id": draw_id,
+            "ts": int(time.time()),
+            "interpret": "",
+            "interpret_kind": "",
+            **drawn,
+        }
+
+        def mutate(state: dict) -> None:
+            ts = state.setdefault("tarot", {})
+            history = ts.setdefault("history", [])
+            if isinstance(history, list):
+                history.insert(0, {
+                    k: entry[k] for k in
+                    ("id", "ts", "spread", "spread_name", "question", "cards")
+                })
+                del history[_tarot._MAX_HISTORY:]
+            readings = ts.setdefault("readings", {})
+            readings[draw_id] = entry
+            keep = {h.get("id") for h in history if isinstance(h, dict)}
+            for k in [k for k in readings if k not in keep]:
+                readings.pop(k, None)
+
+        self._update_state(mutate)
+        return {"ok": True, "draw": entry, "job": self._tarot_job}
+
+    def _panel_tarot_interpret(self, body: dict[str, Any]) -> dict[str, Any]:
+        payload = body if isinstance(body, dict) else {}
+        draw_id = _safe_str(payload.get("draw_id"))
+        readings = self._tarot_state().get("readings")
+        readings = readings if isinstance(readings, dict) else {}
+        entry = readings.get(draw_id)
+        if not isinstance(entry, dict):
+            return {"ok": False, "error": "没有找到这次占卜的记录喵，重新抽一次吧。", "job": self._tarot_job}
+        if self._tarot_job.get("status") == "running" and self._tarot_job.get("draw_id") == draw_id:
+            return {"ok": True, "job": self._tarot_job}
+        if _safe_str(entry.get("interpret")):
+            # 已有解读：直接回，不再花一次模型钱
+            self._tarot_job = {
+                "status": "done", "draw_id": draw_id,
+                "text": entry["interpret"], "kind": entry.get("interpret_kind") or "llm",
+            }
+            return {"ok": True, "job": self._tarot_job}
+        self._tarot_job = {"status": "running", "draw_id": draw_id, "text": ""}
+        thread = threading.Thread(
+            target=self._tarot_worker, args=(draw_id,), daemon=True, name="neko-tarot-interpret"
+        )
+        thread.start()
+        return {"ok": True, "job": self._tarot_job}
+
+    def _tarot_worker(self, draw_id: str) -> None:
+        """后台线程：私有事件循环调 LLM，绝不碰宿主循环（跑完就关的那种不可信）。"""
+        try:
+            readings = self._tarot_state().get("readings") or {}
+            entry = readings.get(draw_id) or {}
+            drawn = {
+                "question": entry.get("question", ""),
+                "spread_name": entry.get("spread_name", ""),
+                "cards": entry.get("cards", []),
+            }
+            text, kind = "", "llm"
+            try:
+                loop = asyncio.new_event_loop()
+                try:
+                    text = loop.run_until_complete(self._tarot_llm(drawn))
+                finally:
+                    loop.close()
+            except Exception as exc:
+                self.logger.warning("[tarot] LLM 解读失败，降级为牌义摆盘：{}", exc)
+                text, kind = _tarot.fallback_reading(drawn), "fallback"
+            if not _safe_str(text):
+                text, kind = _tarot.fallback_reading(drawn), "fallback"
+            self._tarot_job = {
+                "status": "done", "draw_id": draw_id, "text": text, "kind": kind,
+            }
+
+            def mutate(state: dict) -> None:
+                ts = state.setdefault("tarot", {})
+                rs = ts.setdefault("readings", {})
+                if isinstance(rs.get(draw_id), dict):
+                    rs[draw_id]["interpret"] = text
+                    rs[draw_id]["interpret_kind"] = kind
+
+            self._update_state(mutate)
+        except Exception as exc:
+            self.logger.exception("[tarot] 解读线程异常")
+            self._tarot_job = {"status": "error", "draw_id": draw_id, "text": f"解读出了点问题：{exc}"}
+
+    async def _tarot_llm(self, drawn: dict[str, Any]) -> str:
+        cfg: dict[str, Any] = {}
+        try:
+            from utils.config_manager import get_config_manager
+
+            cfg = get_config_manager().get_model_api_config("conversation")
+            cfg = cfg if isinstance(cfg, dict) else {}
+        except Exception as exc:
+            self.logger.info("[tarot] 读取模型配置失败：{}", exc)
+        model = _safe_str(cfg.get("model"))
+        base_url = _safe_str(cfg.get("base_url")).rstrip("/")
+        api_key = _safe_str(cfg.get("api_key"))
+        if not (model and base_url and api_key):
+            raise RuntimeError("尚未配置会话模型")
+        user = "\n".join(_tarot.card_lines(drawn))
+
+        # 优先官方 llm_client；TypeError 兼容无 provider_type 参数的旧签名
+        try:
+            from utils.llm_client import create_chat_llm_async
+
+            kwargs: dict[str, Any] = {
+                "model": model, "base_url": base_url, "api_key": api_key,
+                "max_completion_tokens": 1024, "timeout": 60.0,
+            }
+            try:
+                llm = create_chat_llm_async(**kwargs)
+            except TypeError:
+                provider_type = _safe_str(cfg.get("provider_type")) or None
+                if provider_type:
+                    kwargs["provider_type"] = provider_type
+                llm = create_chat_llm_async(**kwargs)
+            result = await asyncio.wait_for(
+                llm.ainvoke([
+                    {"role": "system", "content": self._TAROT_SYSTEM},
+                    {"role": "user", "content": user},
+                ]),
+                timeout=60.0,
+            )
+            text = getattr(result, "content", None) or _safe_str(result)
+            if _safe_str(text):
+                return str(text).strip()
+            raise RuntimeError("模型返回为空")
+        except ImportError:
+            pass
+        except Exception as exc:
+            self.logger.warning("[tarot] llm_client 调用失败，降级直连：{}", exc)
+        return await asyncio.to_thread(self._tarot_llm_http, base_url, api_key, model, user)
+
+    def _tarot_llm_http(self, base_url: str, api_key: str, model: str, user: str) -> str:
+        import urllib.error
+        import urllib.request
+
+        endpoint = f"{base_url}/chat/completions"
+        body = json.dumps(
+            {
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": self._TAROT_SYSTEM},
+                    {"role": "user", "content": user},
+                ],
+                "max_completion_tokens": 1024,
+            },
+            ensure_ascii=False,
+        ).encode("utf-8")
+        request = urllib.request.Request(
+            endpoint,
+            data=body,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=60.0) as resp:
+                payload = json.loads(resp.read().decode("utf-8", errors="replace"))
+        except urllib.error.HTTPError as exc:
+            raise RuntimeError(f"模型请求失败：HTTP {exc.code}") from exc
+        except Exception as exc:
+            raise RuntimeError(f"模型请求失败：{exc}") from exc
+        choices = payload.get("choices") or []
+        if not choices:
+            raise RuntimeError("模型没有返回内容")
+        return _safe_str((choices[0].get("message") or {}).get("content")).strip()
 
     def _panel_config(self, body: dict[str, Any]) -> dict[str, Any]:
         body = body if isinstance(body, dict) else {}

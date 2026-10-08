@@ -23,5 +23,8 @@
   "panel.background": "背景",
   "panel.font": "フォント",
   "panel.font_size": "文字サイズ",
-  "panel.trail": "マウスの軌跡"
+  "panel.trail": "マウスの軌跡",
+  "panel.tab.tarot": "タロット",
+  "panel.tarot.title": "猫娘タロット",
+  "panel.tarot.start": "占う"
 }

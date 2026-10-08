@@ -23,5 +23,8 @@
   "panel.background": "Background",
   "panel.font": "Font",
   "panel.font_size": "Size",
-  "panel.trail": "Cursor trail"
+  "panel.trail": "Cursor trail",
+  "panel.tab.tarot": "Tarot",
+  "panel.tarot.title": "Catgirl Tarot",
+  "panel.tarot.start": "Start reading"
 }

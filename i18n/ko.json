@@ -23,5 +23,8 @@
   "panel.background": "배경",
   "panel.font": "글꼴",
   "panel.font_size": "글자 크기",
-  "panel.trail": "마우스 궤적"
+  "panel.trail": "마우스 궤적",
+  "panel.tab.tarot": "타로",
+  "panel.tarot.title": "고양이 타로",
+  "panel.tarot.start": "점 보기"
 }

@@ -84,6 +84,61 @@ class TestCommentGate:
         assert allowed is False and reason == "近期已评论过", f"超长内容应去重，实际 {reason}"
 
 
+class TestTarot:
+    """猫娘塔罗：牌库完整性、抽牌逻辑、卡面资源齐全。"""
+
+    def _tarot(self):
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT))
+        spec = importlib.util.spec_from_file_location("neko_cw_tarot", ROOT / "_tarot.py")
+        mod = importlib.util.module_from_spec(spec)
+        _sys.modules["neko_cw_tarot"] = mod
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_deck_complete(self):
+        mod = self._tarot()
+        assert len(mod.CARDS) == 78
+        assert sum(1 for c in mod.CARDS if c["arcana"] == "major") == 22
+        ns = [c["n"] for c in mod.CARDS]
+        assert sorted(ns) == list(range(1, 79)), "牌号应为 1..78 连续"
+        for c in mod.CARDS:
+            assert c["up"] and c["rev"], f"{c['name']} 缺关键词"
+
+    def test_card_images_all_present(self):
+        mod = self._tarot()
+        missing = [c["n"] for c in mod.CARDS
+                   if not (ROOT / "static" / "tarot" / f"c{c['n']:02d}.jpg").is_file()]
+        assert not missing, f"缺卡面图：{missing[:10]}"
+
+    def test_draw_spreads(self):
+        import random as _random
+        mod = self._tarot()
+        for sid in mod.spread_ids():
+            rng = _random.Random(42)
+            drawn = mod.draw(sid, "测试问题", rng=rng)
+            assert drawn is not None
+            spread = mod.SPREADS[sid]
+            assert len(drawn["cards"]) == len(spread["positions"])
+            assert [c["position"] for c in drawn["cards"]] == spread["positions"]
+            ns = [c["n"] for c in drawn["cards"]]
+            assert len(set(ns)) == len(ns), "抽牌不应重复"
+            for c in drawn["cards"]:
+                assert isinstance(c["reversed"], bool)
+                assert c["img"] == f"tarot/c{c['n']:02d}.jpg"
+        assert mod.draw("celtic", "") is None, "未知牌阵应返回 None"
+
+    def test_fallback_reading_is_honest(self):
+        import random as _random
+        mod = self._tarot()
+        drawn = mod.draw("three", "", rng=_random.Random(7))
+        text = mod.fallback_reading(drawn)
+        assert "本喵" in text
+        for c in drawn["cards"]:
+            assert c["name"] in text, "降级解读必须包含真实牌名"
+            assert c["position"] in text
+
+
 class TestPanelContract:
     """面板结构与限速口径的护栏：防止改回去（冷却下限曾三处不一致：2/2/10）。"""
 
@@ -123,6 +178,14 @@ class TestPanelContract:
         assert "pointerdown" in html  # 点击反馈事件源
         assert "ripples" in html
         assert "RIPPLE_MS" in html
+
+    def test_tarot_tab_present(self):
+        """塔罗页签结构护栏。"""
+        html = self._html()
+        assert 'data-tab="tarot"' in html
+        assert "tspreads" in html and "tdraw" in html and "tinterpret" in html
+        assert "btn-interpret" in html
+        assert "tarot/c" not in html  # 卡面地址由后端数据给出，前端不硬编码牌号
 
     def test_versions_agree(self):
         toml = (ROOT / "plugin.toml").read_text(encoding="utf-8")

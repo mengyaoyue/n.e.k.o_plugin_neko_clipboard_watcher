@@ -23,5 +23,8 @@
   "panel.background": "Фон",
   "panel.font": "Шрифт",
   "panel.font_size": "Размер",
-  "panel.trail": "След курсора"
+  "panel.trail": "След курсора",
+  "panel.tab.tarot": "Таро",
+  "panel.tarot.title": "Таро кошечки",
+  "panel.tarot.start": "Начать гадание"
 }

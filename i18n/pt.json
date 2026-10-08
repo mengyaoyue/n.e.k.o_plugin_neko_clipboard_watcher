@@ -23,5 +23,8 @@
   "panel.background": "Fundo",
   "panel.font": "Fonte",
   "panel.font_size": "Tamanho",
-  "panel.trail": "Rastro do cursor"
+  "panel.trail": "Rastro do cursor",
+  "panel.tab.tarot": "Tarô",
+  "panel.tarot.title": "Tarô da neko",
+  "panel.tarot.start": "Consultar"
 }
