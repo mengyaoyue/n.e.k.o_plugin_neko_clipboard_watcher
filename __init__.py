@@ -1,4 +1,4 @@
-"""剪贴板猫娘（neko_clipboard_watcher）v0.3.1 · 作者：MENGYAOYUE
+"""剪贴板猫娘（neko_clipboard_watcher）v0.3.2 · 作者：MENGYAOYUE
 
 监听剪贴板变化，猫娘看到主人复制了什么就主动搭话：
 链接 → 要不要看看；代码 → 凑过来看故事；英文 → 要不要翻译；长文 → 要不要总结。
@@ -241,7 +241,7 @@ class ClipboardWatcherPlugin(NekoPluginBase):
             self.gate.enabled, self.poll_interval_seconds,
             self.cooldown_seconds, self.max_per_hour,
         )
-        return Ok({"status": "running", "version": "0.3.1"})
+        return Ok({"status": "running", "version": "0.3.2"})
 
     def _start_panel(self) -> None:
         endpoints = {

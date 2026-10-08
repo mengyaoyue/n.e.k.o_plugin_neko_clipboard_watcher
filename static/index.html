@@ -204,10 +204,6 @@ button.tiny{padding:2px 10px;font-size:var(--fs-2xs);box-shadow:none}
             <button class="ghost" id="btn-refresh">刷新</button>
             <span class="status" id="st-limits"></span>
           </div>
-          <div class="muted" style="margin-top:9px">
-            轮询越频繁越灵敏、也越耗一点 CPU；冷却决定两次搭话之间的最短间隔；
-            每小时上限是硬闸门，超了就不再打扰你。
-          </div>
         </div>
       </div>
 
@@ -242,9 +238,6 @@ button.tiny{padding:2px 10px;font-size:var(--fs-2xs);box-shadow:none}
             <button class="ghost" id="btn-bg-reset">恢复默认</button>
             <input type="file" id="bg-file" accept="image/png,image/jpeg,image/webp,image/gif" style="display:none">
             <span class="muted" id="bg-note"></span>
-          </div>
-          <div class="muted" style="margin-top:9px">
-            背景图存在本机的 <code>data/backgrounds/</code>，<b>不进安装包</b>；字看不清就把蒙层调厚。
           </div>
         </div>
       </div>
@@ -319,62 +312,102 @@ function floatText(text, at){
   setTimeout(() => node.remove(), 1200);
 }
 
-// ── 鼠标轨迹（不动鼠标就停帧）────────────────────────────────
+// ── 鼠标轨迹 + 点击反馈 ─────────────────────────────────────
+// 轨迹：pointermove + mousemove 双监听（内嵌 webview 里 pointermove 偶发不派发，
+// 只靠它会"有时候不显示"）；点击反馈：pointerdown 在点击点画一圈扩散涟漪。
 const trail = (() => {
   const canvas = $('trail-canvas');
   const ctx = canvas.getContext('2d');
   let points = [];
+  let ripples = [];
   let raf = 0;
   let dpr = 1;
+  let active = true;
+  const TRAIL_MS = 520;
+  const RIPPLE_MS = 560;
   function resize(){
     dpr = Math.min(2, window.devicePixelRatio || 1);
     canvas.width = Math.floor(window.innerWidth * dpr);
     canvas.height = Math.floor(window.innerHeight * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
+  function kick(){
+    if (!raf) raf = requestAnimationFrame(draw);
+  }
   function push(x, y){
     points.push({x, y, t: performance.now()});
     if (points.length > 34) points = points.slice(-34);
-    if (!raf) raf = requestAnimationFrame(draw);
+    kick();
+  }
+  function ripple(x, y){
+    ripples.push({x, y, t: performance.now()});
+    if (ripples.length > 8) ripples = ripples.slice(-8);
+    kick();
   }
   function draw(){
     const now = performance.now();
-    points = points.filter((p) => now - p.t < 520);
+    points = points.filter((p) => now - p.t < TRAIL_MS);
+    ripples = ripples.filter((r) => now - r.t < RIPPLE_MS);
     ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
-    if (points.length < 2){ points = []; raf = 0; return; }
-    for (let i = 1; i < points.length; i++){
-      const a = points[i - 1], b = points[i];
-      const power = 1 - (now - b.t) / 520;
-      const ratio = i / points.length;
-      ctx.strokeStyle = `hsla(${212 + ratio * 58}, ${70 - (1 - power) * 20}%, ${60 + ratio * 6}%, ${0.5 * power})`;
-      ctx.lineWidth = 1.8 + 8 * power * ratio;
-      ctx.lineCap = 'round';
+    let busyWork = false;
+    if (points.length >= 2){
+      busyWork = true;
+      for (let i = 1; i < points.length; i++){
+        const a = points[i - 1], b = points[i];
+        const power = 1 - (now - b.t) / TRAIL_MS;
+        const ratio = i / points.length;
+        ctx.strokeStyle = `hsla(${212 + ratio * 58}, ${70 - (1 - power) * 20}%, ${60 + ratio * 6}%, ${0.5 * power})`;
+        ctx.lineWidth = 1.8 + 8 * power * ratio;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+        ctx.stroke();
+      }
+      // 头部加一点光晕，像笔尖，比纯线条显眼
+      const head = points[points.length - 1];
+      const glow = ctx.createRadialGradient(head.x, head.y, 0, head.x, head.y, 18);
+      glow.addColorStop(0, 'rgba(124,108,240,.4)');
+      glow.addColorStop(1, 'rgba(124,108,240,0)');
+      ctx.fillStyle = glow;
       ctx.beginPath();
-      ctx.moveTo(a.x, a.y);
-      ctx.lineTo(b.x, b.y);
-      ctx.stroke();
+      ctx.arc(head.x, head.y, 18, 0, Math.PI * 2);
+      ctx.fill();
     }
-    // 头部加一点光晕，像笔尖，比纯线条显眼
-    const head = points[points.length - 1];
-    const glow = ctx.createRadialGradient(head.x, head.y, 0, head.x, head.y, 18);
-    glow.addColorStop(0, 'rgba(124,108,240,.4)');
-    glow.addColorStop(1, 'rgba(124,108,240,0)');
-    ctx.fillStyle = glow;
-    ctx.beginPath();
-    ctx.arc(head.x, head.y, 18, 0, Math.PI * 2);
-    ctx.fill();
-    raf = requestAnimationFrame(draw);
+    // 点击涟漪：一圈淡紫色扩散波 + 中心小圆点淡出
+    for (const r of ripples){
+      busyWork = true;
+      const p = (now - r.t) / RIPPLE_MS;
+      const ease = 1 - Math.pow(1 - p, 3);
+      ctx.beginPath();
+      ctx.arc(r.x, r.y, 7 + 34 * ease, 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(124,108,240,${0.5 * (1 - p)})`;
+      ctx.lineWidth = 2.4 * (1 - p) + 0.6;
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(r.x, r.y, 3.2, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(124,108,240,${0.6 * (1 - p)})`;
+      ctx.fill();
+    }
+    if (busyWork){ raf = requestAnimationFrame(draw); }
+    else { raf = 0; }
   }
   function enable(on){
+    active = on;
     canvas.classList.toggle('off', !on);
     if (!on){
       points = [];
+      ripples = [];
       if (raf){ cancelAnimationFrame(raf); raf = 0; }
       ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
     }
   }
-  document.addEventListener('pointermove', (ev) => {
-    if (!canvas.classList.contains('off')) push(ev.clientX, ev.clientY);
+  // 用 active 判断而不是读 classList，避免与 enable 时序打架
+  const onMove = (ev) => { if (active) push(ev.clientX, ev.clientY); };
+  document.addEventListener('pointermove', onMove, {passive: true});
+  document.addEventListener('mousemove', onMove, {passive: true});
+  document.addEventListener('pointerdown', (ev) => {
+    if (active) ripple(ev.clientX, ev.clientY);
   }, {passive: true});
   window.addEventListener('resize', resize);
   resize();

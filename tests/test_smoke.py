@@ -107,6 +107,23 @@ class TestPanelContract:
         html = self._html()
         assert "localStorage.removeItem('cb_base')" in html
 
+    def test_no_bottom_hint_texts(self):
+        """卡片底部的说明小字按用户要求不保留，防回归。"""
+        html = self._html()
+        assert "越耗一点 CPU" not in html
+        assert "不进安装包" not in html
+        assert "超了就不再打扰你" not in html
+        assert "蒙层调厚" not in html
+
+    def test_trail_and_click_feedback(self):
+        """鼠标轨迹：双事件源兜底 + 点击涟漪反馈。"""
+        html = self._html()
+        assert "pointermove" in html
+        assert "mousemove" in html  # 内嵌 webview 里 pointermove 偶发不派发
+        assert "pointerdown" in html  # 点击反馈事件源
+        assert "ripples" in html
+        assert "RIPPLE_MS" in html
+
     def test_versions_agree(self):
         toml = (ROOT / "plugin.toml").read_text(encoding="utf-8")
         init = (ROOT / "__init__.py").read_text(encoding="utf-8")
