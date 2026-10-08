@@ -17,6 +17,19 @@ if "plugin" not in sys.modules:
         def __init__(self, ctx: Any = None) -> None:
             self.ctx = ctx
 
+        def enable_file_logging(self, log_level: str = "INFO"):
+            import logging
+
+            logging.basicConfig(level=log_level)
+            return logging.getLogger("neko_stub")
+
+        def data_path(self, *parts):
+            import tempfile
+            from pathlib import Path
+
+            base = Path(tempfile.mkdtemp(prefix="neko_stub_data_"))
+            return base.joinpath(*parts) if parts else base
+
     def Ok(result: Any = None) -> dict[str, Any]:
         return {"ok": True, "result": result}
 
@@ -27,6 +40,10 @@ if "plugin" not in sys.modules:
         pass
 
     def _decorator(*args: Any, **kwargs: Any):
+        # 同时支持裸装饰 @deco 与带参 @deco(...)：裸用时直接原样返回
+        if len(args) == 1 and not kwargs and callable(args[0]):
+            return args[0]
+
         def decorator(fn):
             return fn
 

@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+import re
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -35,6 +36,23 @@ _MIME = {
 
 def guess_mime(name: str) -> str:
     return _MIME.get(Path(name).suffix.lower(), "application/octet-stream")
+
+
+_LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1", "[::1]"}
+
+
+def origin_allowed(origin: str) -> bool:
+    """面板只信本机来源：无 Origin（同源/宿主 webview）、null（file:// 页面）
+    或 127.0.0.1/localhost 的任意端口。外部网站的 Origin 一律拒绝——
+    否则本机浏览器里随便一个网页都能跨站改你的监听设置、往 data/ 写文件。
+    """
+    origin = (origin or "").strip()
+    if not origin or origin == "null":
+        return True
+    m = re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://([^/:?\s]+)", origin)
+    if not m:
+        return False
+    return m.group(1).lower() in _LOCAL_HOSTS
 
 
 class PanelServer:
@@ -74,13 +92,21 @@ class PanelServer:
                     self.send_header("Cache-Control", "public, max-age=86400")
                 else:
                     self.send_header("Cache-Control", "no-store")
-                self.send_header("Access-Control-Allow-Origin", "*")
-                self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-                self.send_header("Access-Control-Allow-Headers", "Content-Type")
+                # CORS 只对本机来源放行：跨端口打开面板需要它，外部网站不给
+                if origin_allowed(self.headers.get("Origin") or ""):
+                    self.send_header("Access-Control-Allow-Origin", "*")
+                    self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+                    self.send_header("Access-Control-Allow-Headers", "Content-Type")
                 self.end_headers()
                 self.wfile.write(body)
 
+            def _origin_ok(self) -> bool:
+                return origin_allowed(self.headers.get("Origin") or "")
+
             def do_OPTIONS(self):
+                if not self._origin_ok():
+                    self.send_error(403)
+                    return
                 self._reply(b"{}", "application/json")
 
             def do_GET(self):
@@ -104,6 +130,10 @@ class PanelServer:
                         return
                     self.send_error(404)
                     return
+                if not self._origin_ok():
+                    # API 数据不喂给外部网站（静态资源无所谓，浏览器读不走）
+                    self.send_error(403)
+                    return
                 try:
                     payload = fn({})
                     self._reply(json.dumps(payload, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
@@ -115,6 +145,10 @@ class PanelServer:
                 fn = outer._endpoints.get(("POST", route))
                 if fn is None:
                     self.send_error(404)
+                    return
+                if not self._origin_ok():
+                    # POST 会改状态/写文件，外部来源必须硬拒绝（CORS 头挡不住 simple request）
+                    self.send_error(403)
                     return
                 try:
                     length = int(self.headers.get("Content-Length") or 0)

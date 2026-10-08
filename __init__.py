@@ -1,4 +1,4 @@
-"""剪贴板猫娘（neko_clipboard_watcher）v0.1 · 作者：MENGYAOYUE
+"""剪贴板猫娘（neko_clipboard_watcher）v0.3.1 · 作者：MENGYAOYUE
 
 监听剪贴板变化，猫娘看到主人复制了什么就主动搭话：
 链接 → 要不要看看；代码 → 凑过来看故事；英文 → 要不要翻译；长文 → 要不要总结。
@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import ctypes
 import json
+import os
 import threading
 from pathlib import Path
 from typing import Any, Optional
@@ -149,6 +150,9 @@ class ClipboardWatcherPlugin(NekoPluginBase):
         self._poll_thread: Optional[threading.Thread] = None
         self._panel_server = None
         self._panel_port: int = 15700
+        # 状态文件有多个写者（轮询线程 + 面板 HTTP 线程），必须加锁；
+        # 写入一律走 .tmp + os.replace 原子替换，写一半崩了也不会把状态文件截断成 0 字节
+        self._state_lock = threading.Lock()
 
     # ── 配置与状态 ─────────────────────────────────────────────
     async def _load_config(self) -> None:
@@ -160,40 +164,66 @@ class ClipboardWatcherPlugin(NekoPluginBase):
         section = cfg.get(_PLUGIN_ID) if isinstance(cfg, dict) else None
         section = section if isinstance(section, dict) else {}
 
+        # 面板里调过的运行参数存在 state["runtime"]，优先于 toml/config 默认值，
+        # 否则面板改的冷却/上限一重启就悄悄回退，用户会以为开关坏了
+        with self._state_lock:
+            state = self._read_state_dict()
+        runtime = state.get("runtime")
+        runtime = runtime if isinstance(runtime, dict) else {}
+
         self.poll_interval_seconds = max(1.0, _safe_float(
-            section.get("poll_interval_seconds"), _DEFAULTS["poll_interval_seconds"]
+            runtime.get("poll_interval_seconds", section.get("poll_interval_seconds")),
+            _DEFAULTS["poll_interval_seconds"],
         ))
         self.cooldown_seconds = max(2.0, _safe_float(
-            section.get("cooldown_seconds"), _DEFAULTS["cooldown_seconds"]
+            runtime.get("cooldown_seconds", section.get("cooldown_seconds")),
+            _DEFAULTS["cooldown_seconds"],
         ))
-        self.max_per_hour = max(1, _safe_int(section.get("max_per_hour"), _DEFAULTS["max_per_hour"]))
+        self.max_per_hour = max(1, _safe_int(
+            runtime.get("max_per_hour", section.get("max_per_hour")),
+            _DEFAULTS["max_per_hour"],
+        ))
         self.gate = CommentGate(
             cooldown_seconds=self.cooldown_seconds,
             max_per_hour=self.max_per_hour,
         )
-        self._load_state()
+        gate_state = state.get("gate")
+        if isinstance(gate_state, dict):
+            self.gate.load_state(gate_state)
         self._config_loaded = True
 
     async def _ensure_config_loaded(self) -> None:
         if not self._config_loaded:
             await self._load_config()
 
-    def _load_state(self) -> None:
+    def _read_state_dict(self) -> dict:
         try:
-            state = json.loads(self.state_path.read_text(encoding="utf-8"))
+            data = json.loads(self.state_path.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
         except Exception:
-            state = None
-        if isinstance(state, dict):
-            self.gate.load_state(state.get("gate"))
+            return {}
+
+    def _write_state_dict(self, state: dict) -> None:
+        """原子写：先写 .tmp 再 os.replace，绝不出现半截 JSON。"""
+        self.state_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.state_path.with_name(self.state_path.name + ".tmp")
+        tmp.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, self.state_path)
+
+    def _update_state(self, mutate) -> None:
+        """加锁的读-改-写：gate / ui / runtime 各段互不覆盖。"""
+        with self._state_lock:
+            state = self._read_state_dict()
+            try:
+                mutate(state)
+                self._write_state_dict(state)
+            except Exception as exc:
+                self.logger.warning("[clipboard] 状态写入失败：{}", exc)
 
     def _save_state(self) -> None:
-        try:
-            self.state_path.parent.mkdir(parents=True, exist_ok=True)
-            state = self._read_state_dict()
+        def mutate(state: dict) -> None:
             state["gate"] = self.gate.to_state()
-            self.state_path.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
-        except Exception as exc:
-            self.logger.warning("[clipboard] 状态写入失败：{}", exc)
+        self._update_state(mutate)
 
     # ── 生命周期 ───────────────────────────────────────────────
     @lifecycle(id="startup")
@@ -211,7 +241,7 @@ class ClipboardWatcherPlugin(NekoPluginBase):
             self.gate.enabled, self.poll_interval_seconds,
             self.cooldown_seconds, self.max_per_hour,
         )
-        return Ok({"status": "running", "version": "0.1.0"})
+        return Ok({"status": "running", "version": "0.3.1"})
 
     def _start_panel(self) -> None:
         endpoints = {
@@ -294,15 +324,11 @@ class ClipboardWatcherPlugin(NekoPluginBase):
         return merged
 
     def _save_ui_state(self, ui: dict) -> None:
-        """只改 ui 段，保留 gate（否则会把监听状态冲掉）。"""
-        state = self._read_state_dict()
-        state["gate"] = self.gate.to_state()
-        state["ui"] = ui
-        try:
-            self.state_path.parent.mkdir(parents=True, exist_ok=True)
-            self.state_path.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
-        except Exception as exc:
-            self.logger.warning("[clipboard] 界面偏好写入失败：{}", exc)
+        """只改 ui 段，保留 gate / runtime（否则会把监听状态冲掉）。"""
+        def mutate(state: dict) -> None:
+            state["gate"] = self.gate.to_state()
+            state["ui"] = ui
+        self._update_state(mutate)
 
     def _panel_prefs(self, body: dict) -> dict:
         prefs = self._ui_state()
@@ -427,14 +453,23 @@ class ClipboardWatcherPlugin(NekoPluginBase):
         return {"ok": True, "background": self._background_state()}
 
     def _panel_config(self, body: dict[str, Any]) -> dict[str, Any]:
+        body = body if isinstance(body, dict) else {}
         if "cooldown_seconds" in body:
-            self.gate.cooldown_seconds = max(10.0, float(body["cooldown_seconds"]))
+            self.gate.cooldown_seconds = max(2.0, _safe_float(body["cooldown_seconds"], self.gate.cooldown_seconds))
             self.cooldown_seconds = self.gate.cooldown_seconds
         if "max_per_hour" in body:
-            self.gate.max_per_hour = max(1, int(body["max_per_hour"]))
+            self.gate.max_per_hour = max(1, _safe_int(body["max_per_hour"], self.gate.max_per_hour))
         if "poll_interval" in body:
-            self.poll_interval_seconds = max(1.0, float(body["poll_interval"]))
-        self._save_state()
+            self.poll_interval_seconds = max(1.0, _safe_float(body["poll_interval"], self.poll_interval_seconds))
+
+        def mutate(state: dict) -> None:
+            state["gate"] = self.gate.to_state()
+            state["runtime"] = {
+                "poll_interval_seconds": self.poll_interval_seconds,
+                "cooldown_seconds": self.gate.cooldown_seconds,
+                "max_per_hour": self.gate.max_per_hour,
+            }
+        self._update_state(mutate)
         return self._panel_status({})
 
     def _panel_html(self) -> str:
@@ -459,12 +494,18 @@ class ClipboardWatcherPlugin(NekoPluginBase):
     # ── 轮询线程 ───────────────────────────────────────────────
     def _poll_loop(self) -> None:
         last_text: Optional[str] = None
+        first_read = True
         while not self._stop_event.is_set():
             try:
                 text = read_clipboard_text()
-                if text is not None and text != last_text:
-                    last_text = text
-                    self._on_clipboard_changed(text)
+                if text is not None:
+                    if first_read:
+                        # 启动时剪贴板里躺着的旧内容不算新话题，只当基线
+                        first_read = False
+                        last_text = text
+                    elif text != last_text:
+                        last_text = text
+                        self._on_clipboard_changed(text)
             except Exception:
                 self.logger.exception("[clipboard] 轮询异常")
             self._wake_event.clear()

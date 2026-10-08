@@ -196,7 +196,7 @@ button.tiny{padding:2px 10px;font-size:var(--fs-2xs);box-shadow:none}
           <h2>频率与限速</h2>
           <div class="grid">
             <div><label>轮询间隔（秒，≥1）</label><input id="cfg-poll" type="number" min="1" step="0.5"></div>
-            <div><label>冷却（秒，≥10）</label><input id="cfg-cool" type="number" min="10" step="1"></div>
+            <div><label>冷却（秒，≥2）</label><input id="cfg-cool" type="number" min="2" step="1"></div>
             <div><label>每小时上限（次，≥1）</label><input id="cfg-max" type="number" min="1" step="1"></div>
           </div>
           <div class="row">
@@ -259,7 +259,18 @@ const PORTS = [15700, 15701, 15702, 15703, 15704];
 let API_BASE = localStorage.getItem('cb_base');
 
 async function findBase(){
-  if (API_BASE !== null && API_BASE !== undefined) return API_BASE;
+  // 缓存的端口要先验活：端口被占漂移到别的号后，旧缓存会让面板永远"连不上"
+  if (API_BASE !== null && API_BASE !== undefined){
+    try{
+      const res = await fetch(`${API_BASE}/api/status`);
+      if (res.ok){
+        const d = await res.json();
+        if (d && d.enabled !== undefined) return API_BASE;
+      }
+    }catch(err){ /* 缓存失效，重扫 */ }
+    API_BASE = null;
+    localStorage.removeItem('cb_base');
+  }
   const q = Number(new URLSearchParams(location.search).get('port') || 0);
   const candidates = ['', ...(q ? [q] : PORTS).map((p) => `http://127.0.0.1:${p}`)];
   for (const base of candidates){
@@ -558,7 +569,7 @@ $('btn-save').onclick = async () => {
   try {
     const body = {
       poll_interval: Math.max(1, parseFloat($('cfg-poll').value) || 2),
-      cooldown_seconds: Math.max(10, parseFloat($('cfg-cool').value) || 10),
+      cooldown_seconds: Math.max(2, parseFloat($('cfg-cool').value) || 5),
       max_per_hour: Math.max(1, parseInt($('cfg-max').value) || 1),
     };
     const d = await api('/api/config', body);

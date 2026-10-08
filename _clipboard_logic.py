@@ -50,8 +50,14 @@ _MAX_TRACK_LENGTH = 8000
 
 
 def classify_content(text: str) -> dict[str, Any]:
-    """给剪贴板内容分类，返回 ``{"kind", "snippet", "label"}``。"""
+    """给剪贴板内容分类，返回 ``{"kind", "snippet", "label"}``。
+
+    敏感检查必须放在最前：超长文本（>8000 字）里也可能藏着密钥，
+    一旦先按长度归为 long，前 200 字片段（可能正好含密码）就会被推送出去。
+    """
     cleaned = (text or "").strip()
+    if _SENSITIVE_RE.search(cleaned):
+        return {"kind": "sensitive", "snippet": "", "label": "敏感内容"}
     if len(cleaned) > _MAX_TRACK_LENGTH:
         kind, snippet = "long", cleaned[:_MAX_PUSH_SNIPPET]
     elif _SENSITIVE_RE.search(cleaned):
@@ -115,7 +121,10 @@ class CommentGate:
         self.enabled: bool = True
 
     def _hash(self, text: str) -> str:
-        return hashlib.sha256((text or "").strip().encode("utf-8", "ignore")).hexdigest()
+        # 只哈希前 _MAX_TRACK_LENGTH 个字符：allow() 截断后算哈希、record() 用全文算哈希，
+        # 同一段超长内容会因哈希不一致而重复搭话——统一在哈希内部截断。
+        data = (text or "").strip()[:_MAX_TRACK_LENGTH]
+        return hashlib.sha256(data.encode("utf-8", "ignore")).hexdigest()
 
     def allow(self, text: str) -> tuple[bool, str]:
         """判断是否应该开口；返回 ``(是否允许, 原因)``。"""
@@ -124,8 +133,6 @@ class CommentGate:
         cleaned = (text or "").strip()
         if len(cleaned) < _MIN_LENGTH:
             return False, "内容太短"
-        if len(cleaned) > _MAX_TRACK_LENGTH:
-            cleaned = cleaned[:_MAX_TRACK_LENGTH]
         info = classify_content(cleaned)
         if info["kind"] in ("sensitive", "ignore"):
             return False, f"内容{info['kind']}"
