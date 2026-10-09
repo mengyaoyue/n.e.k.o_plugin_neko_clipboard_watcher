@@ -49,6 +49,7 @@ _DEFAULTS: dict[str, Any] = {
     "poll_interval_seconds": 2.0,
     "cooldown_seconds": 5.0,
     "max_per_hour": 30,
+    "max_snippet_chars": 0,      # 0 = 不限制：剪贴板里多长就给猫娘看多长
     "push_enabled": True,
 }
 
@@ -144,6 +145,7 @@ class ClipboardWatcherPlugin(NekoPluginBase):
         self.poll_interval_seconds: float = _DEFAULTS["poll_interval_seconds"]
         self.cooldown_seconds: float = _DEFAULTS["cooldown_seconds"]
         self.max_per_hour: int = _DEFAULTS["max_per_hour"]
+        self.max_snippet_chars: int = _DEFAULTS["max_snippet_chars"]
         self.gate = CommentGate(
             cooldown_seconds=self.cooldown_seconds,
             max_per_hour=self.max_per_hour,
@@ -190,6 +192,11 @@ class ClipboardWatcherPlugin(NekoPluginBase):
         self.max_per_hour = max(1, _safe_int(
             runtime.get("max_per_hour", section.get("max_per_hour")),
             _DEFAULTS["max_per_hour"],
+        ))
+        # 0 = 不限制；负数按 0 处理（面板上填 0 就是「不限」）
+        self.max_snippet_chars = max(0, _safe_int(
+            runtime.get("max_snippet_chars", section.get("max_snippet_chars")),
+            _DEFAULTS["max_snippet_chars"],
         ))
         self.gate = CommentGate(
             cooldown_seconds=self.cooldown_seconds,
@@ -290,6 +297,7 @@ class ClipboardWatcherPlugin(NekoPluginBase):
             "poll_interval": self.poll_interval_seconds,
             "cooldown_seconds": int(self.gate.cooldown_seconds),
             "max_per_hour": self.gate.max_per_hour,
+            "max_snippet_chars": self.max_snippet_chars,
             "pushed_this_hour": len(self.gate.push_times),
             "tracked": len(self.gate.recent_hashes),
             "panel_port": self._panel_port,
@@ -686,6 +694,9 @@ class ClipboardWatcherPlugin(NekoPluginBase):
             self.gate.max_per_hour = max(1, _safe_int(body["max_per_hour"], self.gate.max_per_hour))
         if "poll_interval" in body:
             self.poll_interval_seconds = max(1.0, _safe_float(body["poll_interval"], self.poll_interval_seconds))
+        if "max_snippet_chars" in body:
+            # 0 = 不限；面板留空/填 0 都当作不限
+            self.max_snippet_chars = max(0, _safe_int(body["max_snippet_chars"], self.max_snippet_chars))
 
         def mutate(state: dict) -> None:
             state["gate"] = self.gate.to_state()
@@ -693,6 +704,7 @@ class ClipboardWatcherPlugin(NekoPluginBase):
                 "poll_interval_seconds": self.poll_interval_seconds,
                 "cooldown_seconds": self.gate.cooldown_seconds,
                 "max_per_hour": self.gate.max_per_hour,
+                "max_snippet_chars": self.max_snippet_chars,
             }
         self._update_state(mutate)
         return self._panel_status({})
@@ -744,8 +756,8 @@ class ClipboardWatcherPlugin(NekoPluginBase):
         if not allowed:
             self.logger.info("[clipboard] 跳过评论：{}（长度 {}）", reason, len(text or ""))
             return
-        info = classify_content(text)
-        comment = build_comment(info["kind"], info["snippet"])
+        info = classify_content(text, self.max_snippet_chars)
+        comment = build_comment(info["kind"], info["snippet"], self.max_snippet_chars)
         if not comment:
             return
         self.gate.record(text)
@@ -786,10 +798,10 @@ class ClipboardWatcherPlugin(NekoPluginBase):
         cleaned = (text or "").strip()
         if not cleaned:
             return Ok("剪贴板空空如也喵～主人复制点什么本喵再来看？")
-        info = classify_content(cleaned)
+        info = classify_content(cleaned, self.max_snippet_chars)
         if info["kind"] == "sensitive":
             return Ok("这里面的内容看起来是密码或密钥喵，本喵就装作没看见，主人也要保管好哦！")
-        comment = build_comment(info["kind"], info["snippet"]) or "主人复制了新东西喵！"
+        comment = build_comment(info["kind"], info["snippet"], self.max_snippet_chars) or "主人复制了新东西喵！"
         return Ok(comment)
 
     @plugin_entry(
@@ -820,5 +832,6 @@ class ClipboardWatcherPlugin(NekoPluginBase):
             "🐱 剪贴板猫娘：\n"
             f"- 监听：{'✅ 开' if self.gate.enabled else '⛔ 关'}\n"
             f"- 轮询间隔：{self.poll_interval_seconds} 秒｜冷却：{int(self.cooldown_seconds)} 秒\n"
+            f"- 读取上限：{'不限' if self.max_snippet_chars <= 0 else str(self.max_snippet_chars) + ' 字'}\n"
             f"- 本小时已搭话：{len(self.gate.push_times)} / {self.max_per_hour} 次"
         )

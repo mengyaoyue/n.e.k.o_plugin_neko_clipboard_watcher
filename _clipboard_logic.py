@@ -43,33 +43,46 @@ _KIND_HINTS: dict[str, str] = {
     "long": "主人复制了好长一段内容喵，需要本喵总结一下吗？{snippet}",
 }
 
-# 长度边界：太短多是误触，太长塞给猫娘会吵
+# 长度边界：太短多是误触。
+# 读取上限默认 0 = 不截断：主人复制了多少，猫娘就读多少（面板「限速」页可改）。
 _MIN_LENGTH = 4
-_MAX_PUSH_SNIPPET = 200
 _MAX_TRACK_LENGTH = 8000
+_DEFAULT_MAX_SNIPPET = 0
 
 
-def classify_content(text: str) -> dict[str, Any]:
+def _clip(text: str, max_chars: int = _DEFAULT_MAX_SNIPPET) -> str:
+    """按上限裁剪文本；``max_chars <= 0`` 表示不限制。
+
+    真被裁了会补一个省略号，免得看上去像"内容本来就这么短"。
+    """
+    if max_chars and max_chars > 0 and len(text) > max_chars:
+        return text[:max_chars] + "…"
+    return text
+
+
+def classify_content(text: str, max_snippet: int = _DEFAULT_MAX_SNIPPET) -> dict[str, Any]:
     """给剪贴板内容分类，返回 ``{"kind", "snippet", "label"}``。
 
+    ``max_snippet`` 控制返回片段的长度上限，0（默认）表示原样返回不截断。
+
     敏感检查必须放在最前：超长文本（>8000 字）里也可能藏着密钥，
-    一旦先按长度归为 long，前 200 字片段（可能正好含密码）就会被推送出去。
+    一旦先按长度归为 long，片段（可能正好含密码）就会被推送出去。
     """
     cleaned = (text or "").strip()
     if _SENSITIVE_RE.search(cleaned):
         return {"kind": "sensitive", "snippet": "", "label": "敏感内容"}
     if len(cleaned) > _MAX_TRACK_LENGTH:
-        kind, snippet = "long", cleaned[:_MAX_PUSH_SNIPPET]
+        kind, snippet = "long", _clip(cleaned, max_snippet)
     elif _SENSITIVE_RE.search(cleaned):
         return {"kind": "sensitive", "snippet": "", "label": "敏感内容"}
     elif _URL_RE.search(cleaned) and len(cleaned) < 500 and cleaned.count(" ") <= 3:
-        kind, snippet = "url", cleaned[:_MAX_PUSH_SNIPPET]
+        kind, snippet = "url", _clip(cleaned, max_snippet)
     elif _JSON_RE.match(cleaned):
-        kind, snippet = "json", cleaned[:_MAX_PUSH_SNIPPET]
+        kind, snippet = "json", _clip(cleaned, max_snippet)
     elif _CODE_HINT_RE.search(cleaned) or (_CODE_SHAPE_RE.search(cleaned) and len(cleaned) > 30):
-        kind, snippet = "code", cleaned[:_MAX_PUSH_SNIPPET]
+        kind, snippet = "code", _clip(cleaned, max_snippet)
     elif len(cleaned) > 300:
-        kind, snippet = "long", cleaned[:_MAX_PUSH_SNIPPET]
+        kind, snippet = "long", _clip(cleaned, max_snippet)
     elif len(cleaned) >= _MIN_LENGTH:
         ascii_letters = len("".join(_ASCII_LETTER_RE.findall(cleaned)))
         if ascii_letters >= max(6, int(len(cleaned) * 0.6)):
@@ -78,7 +91,7 @@ def classify_content(text: str) -> dict[str, Any]:
             kind = "number"
         else:
             kind = "text"
-        snippet = cleaned[:_MAX_PUSH_SNIPPET]
+        snippet = _clip(cleaned, max_snippet)
     else:
         return {"kind": "ignore", "snippet": "", "label": "太短，忽略"}
     return {"kind": kind, "snippet": snippet, "label": _KIND_HINTS[kind].split("喵")[0]}
@@ -88,14 +101,17 @@ def is_sensitive(text: str) -> bool:
     return bool(_SENSITIVE_RE.search(text or ""))
 
 
-def build_comment(kind: str, snippet: str) -> Optional[str]:
-    """生成给猫娘的推送文本；``sensitive`` / ``ignore`` 返回 ``None``。"""
+def build_comment(kind: str, snippet: str, max_snippet: int = _DEFAULT_MAX_SNIPPET) -> Optional[str]:
+    """生成给猫娘的推送文本；``sensitive`` / ``ignore`` 返回 ``None``。
+
+    ``max_snippet`` 为 0（默认）时不截断，剪贴板里多长就推多长。
+    """
     hint = _KIND_HINTS.get(kind)
     if not hint:
         return None
     short = (snippet or "").strip().replace("\r", " ").replace("\n", " ")
-    if len(short) > _MAX_PUSH_SNIPPET:
-        short = short[:_MAX_PUSH_SNIPPET] + "…"
+    if max_snippet and max_snippet > 0 and len(short) > max_snippet:
+        short = short[:max_snippet] + "…"
     if not short:
         return None
     return hint.format(snippet=short)

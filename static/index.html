@@ -237,6 +237,7 @@ button.tiny{padding:2px 10px;font-size:var(--fs-2xs);box-shadow:none}
             <div><label>轮询间隔（秒，≥1）</label><input id="cfg-poll" type="number" min="1" step="0.5"></div>
             <div><label>冷却（秒，≥2）</label><input id="cfg-cool" type="number" min="2" step="1"></div>
             <div><label>每小时上限（次，≥1）</label><input id="cfg-max" type="number" min="1" step="1"></div>
+            <div><label>读取上限（字，0 = 不限）</label><input id="cfg-snippet" type="number" min="0" step="50"></div>
           </div>
           <div class="row">
             <button id="btn-save">保存配置</button>
@@ -621,6 +622,9 @@ function render(d){
   $('cfg-poll').value = d.poll_interval;
   $('cfg-cool').value = d.cooldown_seconds;
   $('cfg-max').value = d.max_per_hour;
+  // 0 = 不限（默认）。后端没给这个字段的老版本回退成 0，别显示成空白
+  $('cfg-snippet').value = (d.max_snippet_chars === undefined || d.max_snippet_chars === null)
+    ? 0 : d.max_snippet_chars;
 
   const warns = [];
   if (used >= cap && cap > 0){
@@ -668,6 +672,7 @@ $('btn-save').onclick = async () => {
       poll_interval: Math.max(1, parseFloat($('cfg-poll').value) || 2),
       cooldown_seconds: Math.max(2, parseFloat($('cfg-cool').value) || 5),
       max_per_hour: Math.max(1, parseInt($('cfg-max').value) || 1),
+      max_snippet_chars: Math.max(0, parseInt($('cfg-snippet').value, 10) || 0),
     };
     const d = await api('/api/config', body);
     render(d);

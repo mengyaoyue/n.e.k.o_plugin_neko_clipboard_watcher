@@ -64,9 +64,16 @@ def main():
         assert comment and "测试内容" in comment, f"{kind} 应生成搭话"
     assert mod.build_comment("sensitive", "x") is None, "敏感不应搭话"
     assert mod.build_comment("ignore", "x") is None, "忽略不应搭话"
-    long_comment = mod.build_comment("text", "啊" * 500)
-    assert len(long_comment) < 400, f"超长片段应截断: {len(long_comment)}"
-    assert "…" in long_comment, "截断应有省略号"
+    # 读取上限：默认 0 = 不截断（主人复制了多少，猫娘就读多少）
+    full_comment = mod.build_comment("text", "啊" * 500)
+    assert "啊" * 500 in full_comment, f"默认不该截断: {len(full_comment)}"
+    assert "…" not in full_comment, "不截断时不该有省略号"
+    assert_eq(len(mod.classify_content("啊" * 500)["snippet"]), 500, "默认片段应是全文")
+    # 只有显式给了上限才截断，且要留个省略号
+    capped = mod.build_comment("text", "啊" * 500, 100)
+    assert "…" in capped and len(capped) < 200, f"给了上限就该截断: {len(capped)}"
+    capped_snip = mod.classify_content("啊" * 500, 100)["snippet"]
+    assert capped_snip.startswith("啊" * 100) and capped_snip.endswith("…"), "片段应裁到上限并加省略号"
 
     # 4. CommentGate：去重 / 冷却 / 小时配额 / 开关
     clock = {"t": 1000.0}

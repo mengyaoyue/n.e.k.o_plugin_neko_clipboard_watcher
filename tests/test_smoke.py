@@ -222,3 +222,32 @@ class TestOriginGuard:
         assert mod.origin_allowed("https://evil.example.com") is False
         assert mod.origin_allowed("http://192.168.1.5:8080") is False
         assert mod.origin_allowed("https://sub.127.0.0.1.nip.io") is False
+
+
+class TestReadLimit:
+    """读取字数上限：默认必须是不限，且能在面板里调。"""
+
+    def test_logic_default_is_unlimited(self):
+        mod = _load_logic_module()
+        assert mod._DEFAULT_MAX_SNIPPET == 0, "默认上限应为 0（不限）"
+        long_text = "x" * 5000
+        assert len(mod.classify_content(long_text)["snippet"]) == 5000, "默认不该截断"
+        assert "x" * 5000 in mod.build_comment("long", long_text)
+
+    def test_plugin_default_is_unlimited(self):
+        init = (ROOT / "__init__.py").read_text(encoding="utf-8")
+        assert '"max_snippet_chars": 0' in init, "插件默认读取上限应为 0（不限）"
+
+    def test_plugin_uses_config_not_hardcoded(self):
+        """推送/查询必须走 self.max_snippet_chars，不许再出现写死的截断。"""
+        init = (ROOT / "__init__.py").read_text(encoding="utf-8")
+        assert 'classify_content(text, self.max_snippet_chars)' in init
+        assert 'classify_content(cleaned, self.max_snippet_chars)' in init
+        assert 'build_comment(info["kind"], info["snippet"], self.max_snippet_chars)' in init
+        assert "_MAX_PUSH_SNIPPET" not in init, "写死的片段上限应已移除"
+
+    def test_panel_exposes_the_field(self):
+        html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
+        assert 'id="cfg-snippet"' in html, "面板应能调读取上限"
+        assert "max_snippet_chars" in html
+        assert "0 = 不限" in html
