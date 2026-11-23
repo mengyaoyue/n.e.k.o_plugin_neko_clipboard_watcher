@@ -10,6 +10,8 @@ on:
 
 permissions:
   contents: write
+  id-token: write      # 官方 v2 发布流在隔离 job 里签发构建证明
+  attestations: write
 
 jobs:
   release:
