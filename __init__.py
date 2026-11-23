@@ -1,8 +1,13 @@
-"""剪贴板猫娘（neko_clipboard_watcher）v0.4.1 · 作者：MENGYAOYUE
+"""剪贴板猫娘（neko_clipboard_watcher）v0.5.0 · 作者：MENGYAOYUE
 
 监听剪贴板变化，猫娘看到主人复制了什么就主动搭话：
 链接 → 要不要看看；代码 → 凑过来看故事；英文 → 要不要翻译；长文 → 要不要总结。
 v0.4.0 起内置「猫娘塔罗」：78 张莱德-伟特（公有领域）真卡面 + 三种牌阵 + 猫娘 LLM 解读。
+v0.5.0：
+- 分类更细（视频 / 仓库 / 文档 / 商品 / 社交 / 图片 / 文件 / 报错栈 / 表格 / 命令 / 磁力 / 联系方式），
+  联系方式只给掩码，敏感内容仍是一条都不读；
+- 面板新增「剪贴板历史」（最近 60 条，只存分类与掩码预览，可一键清空）；
+- 新增「按分类开关」与「静音时段」（跨零点也支持），半夜不再为一段代码开口。
 
 设计要点：
 - 感知类功能独立成插件，与定时关怀类（neko_daily_fortune）分离
@@ -18,6 +23,7 @@ import asyncio
 import ctypes
 import json
 import os
+import re
 import threading
 import time
 import uuid
@@ -37,9 +43,11 @@ from plugin.sdk.plugin import (
 
 from . import _tarot
 from ._clipboard_logic import (
+    TOGGLEABLE_KINDS,
     CommentGate,
     build_comment,
     classify_content,
+    mask_contact,
 )
 from ._panel import PanelServer, find_open_port, guess_mime
 
@@ -152,6 +160,10 @@ class ClipboardWatcherPlugin(NekoPluginBase):
         )
         self._config_loaded = False
 
+        # 剪贴板历史（最近 60 条）：只存「分类 + 掩码后的短预览 + 是否真的开了口」
+        self._history: list[dict[str, Any]] = []
+        self._history_max = 60
+
         self._stop_event = threading.Event()
         self._wake_event = threading.Event()
         self._poll_thread: Optional[threading.Thread] = None
@@ -205,6 +217,9 @@ class ClipboardWatcherPlugin(NekoPluginBase):
         gate_state = state.get("gate")
         if isinstance(gate_state, dict):
             self.gate.load_state(gate_state)
+        hist = state.get("history")
+        if isinstance(hist, list):
+            self._history = [row for row in hist if isinstance(row, dict)][-self._history_max:]
         self._config_loaded = True
 
     async def _ensure_config_loaded(self) -> None:
@@ -238,7 +253,43 @@ class ClipboardWatcherPlugin(NekoPluginBase):
     def _save_state(self) -> None:
         def mutate(state: dict) -> None:
             state["gate"] = self.gate.to_state()
+            state["history"] = self._history[-self._history_max:]
         self._update_state(mutate)
+
+    # ── 剪贴板历史（只存分类与掩码预览，不存正文）──────────────────
+    def _history_preview(self, text: str, info: dict) -> str:
+        """给历史列表用的短预览：链接只留域名，正文只留长度。
+
+        隐私口径：**不把正文原样落盘**。链接留域名、代码留首行、联系方式留掩码，
+        纯文本/长文/英文只记字数——历史是「我复制过什么类型」，不是内容存档。
+        """
+        kind = str(info.get("kind") or "")
+        cleaned = (text or "").strip()
+        if kind == "url":
+            match = re.match(r"https?://([^/\s?#]+)", cleaned, re.IGNORECASE)
+            return (match.group(1) if match else cleaned)[:48]
+        if kind == "magnet":
+            return cleaned[:14] + "…"
+        if kind == "contact":
+            return mask_contact(cleaned)[:48]
+        if kind in ("code", "command", "stack", "json", "table"):
+            first_line = cleaned.splitlines()[0] if cleaned else ""
+            return first_line[:48]
+        return f"{len(cleaned)} 字"
+
+    def _push_history(self, text: str, info: dict, pushed: bool, reason: str = "") -> None:
+        entry = {
+            "ts": int(time.time()),
+            "time": time.strftime("%H:%M:%S"),
+            "kind": str(info.get("kind") or ""),
+            "sub": str(info.get("sub") or ""),
+            "preview": self._history_preview(text, info),
+            "pushed": bool(pushed),
+            "reason": str(reason or "")[:24],
+        }
+        self._history.append(entry)
+        if len(self._history) > self._history_max:
+            self._history = self._history[-self._history_max:]
 
     # ── 生命周期 ───────────────────────────────────────────────
     @lifecycle(id="startup")
@@ -256,13 +307,17 @@ class ClipboardWatcherPlugin(NekoPluginBase):
             self.gate.enabled, self.poll_interval_seconds,
             self.cooldown_seconds, self.max_per_hour,
         )
-        return Ok({"status": "running", "version": "0.4.1"})
+        return Ok({"status": "running", "version": "0.5.0"})
 
     def _start_panel(self) -> None:
         endpoints = {
             ("GET", "/api/status"): self._panel_status,
             ("POST", "/api/toggle"): self._panel_toggle,
             ("POST", "/api/config"): self._panel_config,
+            ("GET", "/api/history"): self._panel_history,
+            ("POST", "/api/history/clear"): self._panel_history_clear,
+            ("POST", "/api/kinds"): self._panel_kinds,
+            ("POST", "/api/quiet"): self._panel_quiet,
             ("GET", "/api/panel_prefs"): self._panel_prefs,
             ("POST", "/api/panel_prefs"): self._panel_prefs,
             ("GET", "/api/background"): self._panel_background,
@@ -300,6 +355,10 @@ class ClipboardWatcherPlugin(NekoPluginBase):
             "max_snippet_chars": self.max_snippet_chars,
             "pushed_this_hour": len(self.gate.push_times),
             "tracked": len(self.gate.recent_hashes),
+            "history_count": len(self._history),
+            "disabled_kinds": sorted(self.gate.disabled_kinds),
+            "quiet_start": self.gate.quiet_start,
+            "quiet_end": self.gate.quiet_end,
             "panel_port": self._panel_port,
             "prefs": self._ui_state(),
             "background": self._background_state(),
@@ -309,6 +368,46 @@ class ClipboardWatcherPlugin(NekoPluginBase):
         self.gate.enabled = bool(body.get("enabled"))
         self._save_state()
         return {"ok": True, "enabled": self.gate.enabled}
+
+    # ── 历史 / 分类开关 / 静音时段 ──────────────────────────────
+    def _panel_history(self, _body: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "ok": True,
+            "history": list(reversed(self._history))[: self._history_max],
+            "kinds": list(TOGGLEABLE_KINDS),
+            "disabled": sorted(self.gate.disabled_kinds),
+            "quiet_start": self.gate.quiet_start,
+            "quiet_end": self.gate.quiet_end,
+        }
+
+    def _panel_history_clear(self, _body: dict[str, Any]) -> dict[str, Any]:
+        count = len(self._history)
+        self._history = []
+        self._save_state()
+        return {"ok": True, "removed": count}
+
+    def _panel_kinds(self, body: dict[str, Any]) -> dict[str, Any]:
+        kind = _safe_str(body.get("kind"))
+        if kind not in TOGGLEABLE_KINDS:
+            return {"ok": False, "error": f"没有这个分类：{kind}"}
+        enabled = bool(body.get("enabled", True))
+        if enabled:
+            self.gate.disabled_kinds.discard(kind)
+        else:
+            self.gate.disabled_kinds.add(kind)
+        self._save_state()
+        return {"ok": True, "disabled": sorted(self.gate.disabled_kinds)}
+
+    def _panel_quiet(self, body: dict[str, Any]) -> dict[str, Any]:
+        start = _safe_str(body.get("start"))[:5]
+        end = _safe_str(body.get("end"))[:5]
+        for value in (start, end):
+            if value and not re.match(r"^\d{1,2}:\d{2}$", value):
+                return {"ok": False, "error": "时间格式要像 23:30"}
+        self.gate.quiet_start = start
+        self.gate.quiet_end = end
+        self._save_state()
+        return {"ok": True, "quiet_start": start, "quiet_end": end}
 
     # ── 界面偏好与自定义背景（图存 data/，不进安装包）──────────────
     _PANEL_PREFS_DEFAULT = {
@@ -323,13 +422,6 @@ class ClipboardWatcherPlugin(NekoPluginBase):
         "image/png": ".png", "image/jpeg": ".jpg", "image/jpg": ".jpg",
         "image/webp": ".webp", "image/gif": ".gif",
     }
-
-    def _read_state_dict(self) -> dict:
-        try:
-            data = json.loads(self.state_path.read_text(encoding="utf-8"))
-            return data if isinstance(data, dict) else {}
-        except Exception:
-            return {}
 
     def _ui_state(self) -> dict:
         state = self._read_state_dict()
@@ -753,12 +845,16 @@ class ClipboardWatcherPlugin(NekoPluginBase):
 
     def _on_clipboard_changed(self, text: str) -> None:
         allowed, reason = self.gate.allow(text)
+        info = classify_content(text, self.max_snippet_chars)
+        self._push_history(text, info, allowed, "" if allowed else reason)
         if not allowed:
+            self._save_state()
             self.logger.info("[clipboard] 跳过评论：{}（长度 {}）", reason, len(text or ""))
             return
-        info = classify_content(text, self.max_snippet_chars)
-        comment = build_comment(info["kind"], info["snippet"], self.max_snippet_chars)
+        comment = build_comment(info["kind"], info["snippet"], self.max_snippet_chars,
+                                info.get("sub") or "")
         if not comment:
+            self._save_state()
             return
         self.gate.record(text)
         self._save_state()
@@ -801,7 +897,8 @@ class ClipboardWatcherPlugin(NekoPluginBase):
         info = classify_content(cleaned, self.max_snippet_chars)
         if info["kind"] == "sensitive":
             return Ok("这里面的内容看起来是密码或密钥喵，本喵就装作没看见，主人也要保管好哦！")
-        comment = build_comment(info["kind"], info["snippet"], self.max_snippet_chars) or "主人复制了新东西喵！"
+        comment = build_comment(info["kind"], info["snippet"], self.max_snippet_chars,
+                                info.get("sub") or "") or "主人复制了新东西喵！"
         return Ok(comment)
 
     @plugin_entry(
@@ -828,10 +925,18 @@ class ClipboardWatcherPlugin(NekoPluginBase):
     )
     async def status_entry(self, **_):
         await self._ensure_config_loaded()
+        quiet = ""
+        if self.gate.quiet_start and self.gate.quiet_end:
+            quiet = f"\n- 静音时段：{self.gate.quiet_start} - {self.gate.quiet_end}"
+        disabled = ""
+        if self.gate.disabled_kinds:
+            disabled = f"\n- 已关闭分类：{'、'.join(sorted(self.gate.disabled_kinds))}"
         return Ok(
             "🐱 剪贴板猫娘：\n"
             f"- 监听：{'✅ 开' if self.gate.enabled else '⛔ 关'}\n"
             f"- 轮询间隔：{self.poll_interval_seconds} 秒｜冷却：{int(self.cooldown_seconds)} 秒\n"
             f"- 读取上限：{'不限' if self.max_snippet_chars <= 0 else str(self.max_snippet_chars) + ' 字'}\n"
-            f"- 本小时已搭话：{len(self.gate.push_times)} / {self.max_per_hour} 次"
+            f"- 本小时已搭话：{len(self.gate.push_times)} / {self.max_per_hour} 次\n"
+            f"- 历史条数：{len(self._history)}"
+            f"{quiet}{disabled}"
         )

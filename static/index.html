@@ -90,6 +90,18 @@ button.tiny{padding:2px 10px;font-size:var(--fs-2xs);box-shadow:none}
 .stat{background:rgba(255,255,255,.66);border:1px solid var(--line);border-radius:14px;padding:10px 12px}
 .stat b{display:block;font-family:var(--font-ui);font-size:var(--fs-xl);color:#40375f;line-height:1.25}
 .stat span{font-size:var(--fs-2xs);color:var(--dim)}
+/* 剪贴板历史与分类开关（v0.5.0） */
+.hitem{display:flex;gap:8px;align-items:baseline;padding:7px 10px;border-radius:10px;
+  background:rgba(255,255,255,.62);border:1px solid var(--line);margin-bottom:6px;font-size:var(--fs-sm)}
+.hitem .hk{flex:none;font-size:var(--fs-2xs);padding:1px 8px;border-radius:999px;
+  background:rgba(109,92,224,.12);color:#5b4fc4}
+.hitem .hp{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink2)}
+.hitem .ht{flex:none;font-size:var(--fs-2xs);color:var(--dim)}
+.hitem.skip{opacity:.7}
+.hitem.skip .hk{background:rgba(133,125,166,.16);color:var(--dim)}
+.kchip{padding:4px 12px;border-radius:999px;border:1px solid var(--edge);background:rgba(255,255,255,.72);
+  color:var(--ink2);font-size:var(--fs-xs);cursor:pointer;font-family:inherit}
+.kchip.off{text-decoration:line-through;color:var(--dim);background:rgba(255,255,255,.4)}
 .badge{display:inline-block;padding:2px 10px;border-radius:999px;font-size:var(--fs-xs);margin:2px 4px 2px 0}
 .badge.on{background:rgba(61,189,139,.18);color:var(--ok)}
 .badge.off{background:rgba(224,119,142,.16);color:var(--bad)}
@@ -219,6 +231,32 @@ button.tiny{padding:2px 10px;font-size:var(--fs-2xs);box-shadow:none}
         <div class="card">
           <h2>运行数据</h2>
           <div class="stats" id="stat-box"></div>
+        </div>
+        <div class="card">
+          <h2>按分类开口</h2>
+          <div class="muted">关掉的分类照样能手动「看看剪贴板」，只是猫娘不会主动为它开口。敏感内容不在此列，永远不读。</div>
+          <div class="row" id="kind-box"></div>
+        </div>
+        <div class="card">
+          <h2>静音时段</h2>
+          <div class="muted">这段时间里猫娘不主动搭话（跨零点也支持，例如 23:30 到 08:00）。</div>
+          <div class="row">
+            <input id="quiet-start" placeholder="23:00" maxlength="5" style="width:96px">
+            <span class="muted">到</span>
+            <input id="quiet-end" placeholder="08:00" maxlength="5" style="width:96px">
+            <button class="ghost tiny" id="btn-quiet-save">保存</button>
+            <button class="ghost tiny" id="btn-quiet-clear">取消静音</button>
+            <span class="status" id="st-quiet"></span>
+          </div>
+        </div>
+        <div class="card">
+          <h2>剪贴板历史</h2>
+          <div class="muted">只记「分类 + 掩码预览」：链接只留域名、联系方式打码、纯文本只记字数，<b>不存正文</b>。</div>
+          <div id="hist-box"></div>
+          <div class="row">
+            <button class="ghost tiny" id="btn-hist-clear">清空历史</button>
+            <span class="status" id="st-hist"></span>
+          </div>
         </div>
         <div class="card">
           <h2>隐私</h2>
@@ -641,12 +679,59 @@ async function loadStatus(){
     if (d.prefs){ PREFS = Object.assign({}, PREFS, d.prefs); applyPrefs(); }
     if (d.background){ BG = Object.assign({}, BG, d.background); bgStamp = Date.now(); applyBackground(); }
     render(d);
+    loadHistory();
     statusOf($('st-overview'), true, '已更新');
   } catch (err){
     $('pill-dot').classList.toggle('off', true);
     $('pill-text').textContent = err && err.noService ? '连不上面板服务' : '读取失败';
     statusOf($('st-overview'), false, String(err));
     $('warn-box').innerHTML = `<div class="notice bad">${esc(String(err))}</div>`;
+  }
+}
+
+// ── 历史 / 分类开关 / 静音时段（v0.5.0）───────────────────────
+const KIND_LABELS = {
+  url: '链接', code: '代码', json: 'JSON', stack: '报错', table: '表格',
+  command: '命令', magnet: '下载链', contact: '联系方式', english: '英文',
+  number: '数字', text: '短文本', long: '长文',
+};
+const SUB_LABELS = {
+  video: '视频', repo: '仓库', doc: '文档', shop: '商品', social: '社交',
+  image: '图片', file: '文件', stack: '报错栈',
+};
+async function loadHistory(){
+  try {
+    const d = await api('/api/history');
+    const rows = d.history || [];
+    $('hist-box').innerHTML = rows.length ? rows.map((row) => {
+      const kind = SUB_LABELS[row.sub] || KIND_LABELS[row.kind] || row.kind || '—';
+      const why = row.pushed ? '已搭话' : (row.reason || '已跳过');
+      return `<div class="hitem ${row.pushed ? '' : 'skip'}">
+        <span class="hk">${esc(kind)}</span>
+        <span class="hp">${esc(row.preview || '')}</span>
+        <span class="ht">${esc(row.time || '')} · ${esc(why)}</span>
+      </div>`;
+    }).join('') : '<div class="muted" id="hist-empty">还没有记录。复制点什么，猫娘就会在这里留一行。</div>';
+    // 分类开关
+    const disabled = new Set(d.disabled || []);
+    $('kind-box').innerHTML = (d.kinds || []).map((kind) =>
+      `<button class="kchip ${disabled.has(kind) ? 'off' : ''}" data-kind="${esc(kind)}"
+        title="${disabled.has(kind) ? '点一下恢复主动开口' : '点一下关掉这个分类'}">${esc(KIND_LABELS[kind] || kind)}</button>`
+    ).join('');
+    $('kind-box').querySelectorAll('.kchip').forEach((el) => {
+      el.onclick = async () => {
+        const off = el.classList.contains('off');
+        const res = await api('/api/kinds', {kind: el.dataset.kind, enabled: off});
+        if (res.ok) loadHistory();
+      };
+    });
+    $('quiet-start').value = d.quiet_start || '';
+    $('quiet-end').value = d.quiet_end || '';
+    if (d.quiet_start && d.quiet_end){
+      $('st-quiet').textContent = `已静音 ${d.quiet_start} - ${d.quiet_end}`;
+    }
+  } catch (err){
+    $('hist-box').innerHTML = `<div class="muted">${esc(String(err))}</div>`;
   }
 }
 
@@ -683,6 +768,32 @@ $('btn-refresh').onclick = async () => {
   busy($('st-limits'), '刷新中…');
   try { await loadStatus(); statusOf($('st-limits'), true, '已刷新'); }
   catch (err){ statusOf($('st-limits'), false, String(err)); }
+};
+
+// 历史 / 静音（v0.5.0）
+$('btn-hist-clear').onclick = async () => {
+  busy($('st-hist'), '清空中…');
+  try {
+    const res = await api('/api/history/clear', {});
+    statusOf($('st-hist'), true, `已清空 ${res.removed || 0} 条`);
+    loadHistory();
+  } catch (err){ statusOf($('st-hist'), false, String(err)); }
+};
+$('btn-quiet-save').onclick = async () => {
+  busy($('st-quiet'), '保存中…');
+  try {
+    const res = await api('/api/quiet', {
+      start: $('quiet-start').value.trim(),
+      end: $('quiet-end').value.trim(),
+    });
+    if (!res.ok){ statusOf($('st-quiet'), false, res.error || '保存失败'); return; }
+    statusOf($('st-quiet'), true, res.quiet_start ? `已静音 ${res.quiet_start} - ${res.quiet_end}` : '已清除静音');
+  } catch (err){ statusOf($('st-quiet'), false, String(err)); }
+};
+$('btn-quiet-clear').onclick = async () => {
+  $('quiet-start').value = '';
+  $('quiet-end').value = '';
+  $('btn-quiet-save').click();
 };
 
 // ── 猫娘塔罗 ────────────────────────────────────────────────

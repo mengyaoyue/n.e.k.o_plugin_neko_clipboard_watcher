@@ -243,7 +243,8 @@ class TestReadLimit:
         init = (ROOT / "__init__.py").read_text(encoding="utf-8")
         assert 'classify_content(text, self.max_snippet_chars)' in init
         assert 'classify_content(cleaned, self.max_snippet_chars)' in init
-        assert 'build_comment(info["kind"], info["snippet"], self.max_snippet_chars)' in init
+        # v0.5.0：build_comment 多了一个 sub 参数（链接细分成视频/仓库/文档…）
+        assert "build_comment(info[\"kind\"], info[\"snippet\"], self.max_snippet_chars" in init
         assert "_MAX_PUSH_SNIPPET" not in init, "写死的片段上限应已移除"
 
     def test_panel_exposes_the_field(self):
